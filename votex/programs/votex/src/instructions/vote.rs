@@ -25,7 +25,10 @@ pub fn vote(ctx: Context<VoteCandidate>, poll_id: u64, cid: u64) -> Result<()> {
     voter.cid = cid;
     voter.has_voted = true;
 
-    candidate.votes += 1;
+    candidate.votes = candidate
+        .votes
+        .checked_add(1)
+        .ok_or(ArithmeticOverflow)?;
     Ok(())
 }
 
@@ -53,16 +56,13 @@ pub struct VoteCandidate<'info> {
     pub candidate: Account<'info, Candidate>,
 
     #[account(
-        init,
+        init_if_needed,
         payer = user,
         space = ANCHOR_DISCRIMINATOR_SIZE + 25,
         seeds = [b"voter", poll_id.to_le_bytes().as_ref(), user.key().as_ref()],
         bump
     )]
     pub voter: Account<'info, Voter>,
-
-    #[account(mut)]
-    pub registrations: Account<'info, Registrations>,
 
     pub system_program: Program<'info, System>,
 }

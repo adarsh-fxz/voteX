@@ -1,5 +1,5 @@
 use crate::constants::ANCHOR_DISCRIMINATOR_SIZE;
-use crate::errors::ErrorCode::InvalidDates;
+use crate::errors::ErrorCode::*;
 use crate::states::*;
 use anchor_lang::prelude::*;
 
@@ -14,7 +14,7 @@ pub fn create_poll(
     }
 
     let counter = &mut ctx.accounts.counter;
-    counter.count += 1;
+    counter.count = counter.count.checked_add(1).ok_or(ArithmeticOverflow)?;
 
     let poll = &mut ctx.accounts.poll;
 

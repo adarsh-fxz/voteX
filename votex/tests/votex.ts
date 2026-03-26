@@ -18,11 +18,6 @@ describe("voteX", () => {
       program.programId,
     );
 
-    const [registrationsPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("registrations")],
-      program.programId,
-    );
-
     // Attempt to fetch the counter account
     // skip initialization if it exists
     let counter: any;
@@ -76,11 +71,6 @@ describe("voteX", () => {
   });
 
   it("Registers a candidate", async () => {
-    const [pollPda] = PublicKey.findProgramAddressSync(
-      [PID.toArrayLike(Buffer, "le", 8)],
-      program.programId,
-    );
-
     const [registrationsPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("registrations")],
       program.programId,
@@ -100,7 +90,6 @@ describe("voteX", () => {
       .accounts({
         user: user.publicKey,
         candidate: candidatePda,
-        registrations: registrationsPda,
       })
       .rpc();
 
@@ -110,12 +99,6 @@ describe("voteX", () => {
   });
 
   it("Votes for a candidate", async () => {
-    // Derive the PDA for the poll
-    const [pollPda] = PublicKey.findProgramAddressSync(
-      [PID.toArrayLike(Buffer, "le", 8)],
-      program.programId,
-    );
-
     // Derive the PDA for the candidate
     const [candidatePda] = PublicKey.findProgramAddressSync(
       [PID.toArrayLike(Buffer, "le", 8), CID.toArrayLike(Buffer, "le", 8)],
@@ -132,17 +115,11 @@ describe("voteX", () => {
       program.programId,
     );
 
-    const [registrationsPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("registrations")],
-      program.programId,
-    );
-
     // Perform the vote
     await program.methods
       .vote(PID, CID)
       .accounts({
         user: user.publicKey,
-        registrations: registrationsPda,
       })
       .rpc();
 

@@ -14,4 +14,6 @@ pub enum ErrorCode {
     VoterAlreadyVoted,
     #[msg("Poll not currently active")]
     PollNotActive,
+    #[msg("Arithmetic overflow")]
+    ArithmeticOverflow,
 }

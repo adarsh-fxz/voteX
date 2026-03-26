@@ -19,14 +19,17 @@ pub fn register_candidate(
     }
 
     let registrations = &mut ctx.accounts.registrations;
-    registrations.count += 1;
+    registrations.count = registrations
+        .count
+        .checked_add(1)
+        .ok_or(ArithmeticOverflow)?;
 
     candidate.cid = registrations.count;
     candidate.poll_id = poll_id;
     candidate.name = name;
     candidate.has_registered = true;
 
-    poll.candidates += 1;
+    poll.candidates = poll.candidates.checked_add(1).ok_or(ArithmeticOverflow)?;
     Ok(())
 }
 
@@ -55,7 +58,11 @@ pub struct RegisterCandidate<'info> {
     )]
     pub candidate: Account<'info, Candidate>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"registrations"],
+        bump
+    )]
     pub registrations: Account<'info, Registrations>,
 
     pub system_program: Program<'info, System>,
