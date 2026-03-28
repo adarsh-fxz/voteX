@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { APP_NAME } from "../lib/constants";
+import { APP_NAME } from "@/lib/constants";
 
 export default function Home() {
   return (
@@ -12,9 +12,14 @@ export default function Home() {
           {APP_NAME}
         </h1>
         <p className="mt-4 text-lg leading-relaxed text-muted">
-          Verifiable polls: optional Merkle eligibility, on-chain commitments,
-          and IPFS-backed voter lists. Connect a wallet to try on devnet.
+          Verifiable voting: Merkle eligibility, on-chain commitments, IPFS
+          voter lists, and explorer links. Connect a Phantom / Solflare wallet.
         </p>
+        <ul className="mt-6 list-inside list-disc text-muted">
+          <li>Normal or rating polls</li>
+          <li>Open or Merkle-restricted access</li>
+          <li>Invite codes (hashed) + commit flow for restricted polls</li>
+        </ul>
         <div className="mt-10 flex flex-wrap gap-4">
           <Link
             href="/polls"

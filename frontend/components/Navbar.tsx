@@ -1,13 +1,27 @@
 "use client";
 
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+import dynamic from "next/dynamic";
 import Link from "next/link";
-import { APP_NAME } from "../lib/constants";
+import { APP_NAME } from "@/lib/constants";
 
 const links = [
   { href: "/polls", label: "Polls" },
   { href: "/create", label: "Create poll" },
 ] as const;
+
+const WalletMultiButton = dynamic(
+  () =>
+    import("@solana/wallet-adapter-react-ui").then((m) => m.WalletMultiButton),
+  {
+    ssr: false,
+    loading: () => (
+      <span
+        className="inline-block h-10 min-w-37 rounded-md border border-border bg-surface"
+        aria-hidden
+      />
+    ),
+  },
+);
 
 export function Navbar() {
   return (
