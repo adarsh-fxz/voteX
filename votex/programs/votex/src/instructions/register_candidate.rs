@@ -13,6 +13,14 @@ pub fn register_candidate(
         return Err(PollDoesNotExist.into());
     }
 
+    if ctx.accounts.user.key() != poll.creator {
+        return Err(Unauthorized.into());
+    }
+
+    if name.len() > 32 {
+        return Err(CandidateNameTooLong.into());
+    }
+
     let candidate = &mut ctx.accounts.candidate;
     if candidate.has_registered {
         return Err(CandidateAlreadyRegistered.into());
@@ -28,6 +36,13 @@ pub fn register_candidate(
     candidate.poll_id = poll_id;
     candidate.name = name;
     candidate.has_registered = true;
+
+    // Pre-initialize the RatingResult so all judges pay equal cost (just their Rater PDA).
+    let rating_result = &mut ctx.accounts.rating_result;
+    rating_result.poll_id = poll_id;
+    rating_result.candidate_id = registrations.count;
+    rating_result.total_score = 0;
+    rating_result.vote_count = 0;
 
     poll.candidates = poll.candidates.checked_add(1).ok_or(ArithmeticOverflow)?;
     Ok(())
@@ -53,10 +68,23 @@ pub struct RegisterCandidate<'info> {
         seeds = [
             poll_id.to_le_bytes().as_ref(),
             (registrations.count + 1).to_le_bytes().as_ref()
-            ],
+        ],
         bump
     )]
     pub candidate: Account<'info, Candidate>,
+
+    #[account(
+        init,
+        payer = user,
+        space = ANCHOR_DISCRIMINATOR_SIZE + RatingResult::INIT_SPACE,
+        seeds = [
+            b"rating_result",
+            poll_id.to_le_bytes().as_ref(),
+            (registrations.count + 1).to_le_bytes().as_ref()
+        ],
+        bump
+    )]
+    pub rating_result: Account<'info, RatingResult>,
 
     #[account(
         mut,

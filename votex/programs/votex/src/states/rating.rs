@@ -2,6 +2,6 @@ use anchor_lang::prelude::*;
 
 #[account]
 #[derive(InitSpace)]
-pub struct Registrations {
-    pub count: u64,
+pub struct Rater {
+    pub rated_mask: u32,
 }

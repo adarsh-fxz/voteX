@@ -5,12 +5,18 @@ use anchor_lang::prelude::*;
 
 pub fn create_poll(
     ctx: Context<CreatePoll>,
-    description: String,
-    start: u64,
-    end: u64,
+    registration_end: u64,
+    voting_start: u64,
+    voting_end: u64,
+    kind: PollKind,
+    access_mode: AccessMode,
+    metadata_uri: String,
 ) -> Result<()> {
-    if start >= end {
-        return Err(InvalidDates.into());
+    if registration_end >= voting_start || voting_start >= voting_end {
+        return Err(InvalidTimeWindows.into());
+    }
+    if metadata_uri.len() > 60 {
+        return Err(MetadataUriTooLong.into());
     }
 
     let counter = &mut ctx.accounts.counter;
@@ -19,10 +25,21 @@ pub fn create_poll(
     let poll = &mut ctx.accounts.poll;
 
     poll.id = counter.count;
-    poll.description = description;
-    poll.start = start;
-    poll.end = end;
+    poll.creator = ctx.accounts.user.key();
+    poll.kind = kind;
+    poll.access_mode = access_mode;
+    poll.is_frozen = false;
+    poll.merkle_version = 0;
     poll.candidates = 0;
+    poll.committed_voter_count = 0;
+    poll.registration_end = registration_end;
+    poll.voting_start = voting_start;
+    poll.voting_end = voting_end;
+    poll.commit_time = 0;
+    poll.merkle_root = [0u8; 32];
+    poll.list_hash = [0u8; 32];
+    poll.metadata_uri = metadata_uri;
+    poll.content_cid = String::new();
 
     Ok(())
 }

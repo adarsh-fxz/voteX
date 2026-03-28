@@ -19,7 +19,7 @@ pub struct Initialize<'info> {
     #[account(
         init,
         payer = user,
-        space = ANCHOR_DISCRIMINATOR_SIZE + 8,
+        space = ANCHOR_DISCRIMINATOR_SIZE + Counter::INIT_SPACE,
         seeds = [b"counter"],
         bump
     )]
@@ -28,7 +28,7 @@ pub struct Initialize<'info> {
     #[account(
         init,
         payer = user,
-        space = ANCHOR_DISCRIMINATOR_SIZE + 8,
+        space = ANCHOR_DISCRIMINATOR_SIZE + Registrations::INIT_SPACE,
         seeds = [b"registrations"],
         bump
     )]
