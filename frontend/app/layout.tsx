@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Navbar } from "@/components/Navbar";
+import { ThemeProvider } from "@/components/ThemeProvider";
 import { WalletContextProvider } from "@/components/WalletContextProvider";
 import { APP_NAME } from "@/lib/constants";
 
@@ -16,9 +17,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: `${APP_NAME} — verifiable voting`,
+  title: `${APP_NAME} — premium verifiable voting on Solana`,
   description:
-    "Create and participate in polls on Solana with optional Merkle eligibility and IPFS artifacts.",
+    "Launch premium, verifiable voting experiences on Solana with wallet-native access control, Merkle eligibility, and IPFS-backed audit artifacts.",
 };
 
 export default function RootLayout({
@@ -33,13 +34,15 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body
-        className="flex min-h-full flex-col bg-background"
+        className="flex min-h-full flex-col bg-background text-foreground"
         suppressHydrationWarning
       >
-        <WalletContextProvider>
-          <Navbar />
-          <main className="flex flex-1 flex-col">{children}</main>
-        </WalletContextProvider>
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+          <WalletContextProvider>
+            <Navbar />
+            <main className="flex flex-1 flex-col">{children}</main>
+          </WalletContextProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

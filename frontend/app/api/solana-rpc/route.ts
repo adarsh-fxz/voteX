@@ -29,6 +29,61 @@ function pickUpstream(method: string | undefined, primary: string): string {
   return primary;
 }
 
+const CACHEABLE_METHODS = new Set([
+  "getProgramAccounts",
+  "getAccountInfo",
+  "getMultipleAccounts",
+]);
+
+const responseCache = new Map<string, { expiresAt: number; payload: string }>();
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function shouldCache(method: string | undefined): boolean {
+  return method ? CACHEABLE_METHODS.has(method) : false;
+}
+
+function isJsonRpcRateLimitPayload(payload: string): boolean {
+  return /too many requests|rate limit|429/i.test(payload);
+}
+
+async function fetchUpstreamWithRetry(
+  endpoint: string,
+  body: string,
+  method: string | undefined,
+): Promise<{ status: number; text: string }> {
+  const maxAttempts = method === "getProgramAccounts" ? 4 : 3;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    const text = await res.text();
+
+    const rateLimited = res.status === 429 || isJsonRpcRateLimitPayload(text);
+    if (!rateLimited || attempt === maxAttempts - 1) {
+      return { status: res.status, text };
+    }
+
+    await sleep(300 * (attempt + 1));
+  }
+
+  return {
+    status: 500,
+    text: JSON.stringify({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32603, message: "RPC retry exhausted" },
+    }),
+  };
+}
+
 function rpcMethodFromPayload(single: unknown): string | undefined {
   if (
     typeof single === "object" &&
@@ -82,15 +137,10 @@ export async function POST(req: Request) {
       const method = rpcMethodFromPayload(single);
       const endpoint = pickUpstream(method, primary);
       const one = JSON.stringify(single);
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: one,
-      });
-      const text = await res.text();
-      if (process.env.NODE_ENV === "development" && !res.ok) {
+      const { status, text } = await fetchUpstreamWithRetry(endpoint, one, method);
+      if (process.env.NODE_ENV === "development" && status !== 200) {
         console.warn(
-          `[solana-rpc] batch item upstream ${res.status} method=${method ?? "?"} endpoint=${endpoint.slice(0, 48)}…`,
+          `[solana-rpc] batch item upstream ${status} method=${method ?? "?"} endpoint=${endpoint.slice(0, 48)}…`,
           text.slice(0, 200),
         );
       }
@@ -111,7 +161,7 @@ export async function POST(req: Request) {
             : null,
         error: {
           code: -32603,
-          message: `Upstream HTTP ${res.status}: ${text.slice(0, 200)}`,
+          message: `Upstream HTTP ${status}: ${text.slice(0, 200)}`,
         },
       });
     }
@@ -124,22 +174,32 @@ export async function POST(req: Request) {
 
   const method = rpcMethodFromPayload(parsed);
   const endpoint = pickUpstream(method, primary);
+  const cacheKey = shouldCache(method) ? `${endpoint}::${body}` : null;
+  const cached = cacheKey ? responseCache.get(cacheKey) : undefined;
+  if (cached && cached.expiresAt > Date.now()) {
+    return new NextResponse(cached.payload, {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body,
-  });
-  const text = await res.text();
+  const { status, text } = await fetchUpstreamWithRetry(endpoint, body, method);
 
-  if (process.env.NODE_ENV === "development" && !res.ok) {
+  if (process.env.NODE_ENV === "development" && status !== 200) {
     console.warn(
-      `[solana-rpc] upstream ${res.status} method=${method ?? "?"} endpoint=${endpoint.slice(0, 48)}…`,
+      `[solana-rpc] upstream ${status} method=${method ?? "?"} endpoint=${endpoint.slice(0, 48)}…`,
       text.slice(0, 320),
     );
   }
 
-  if (!res.ok) {
+  if (cacheKey && status === 200 && !isJsonRpcRateLimitPayload(text)) {
+    responseCache.set(cacheKey, {
+      expiresAt: Date.now() + 10_000,
+      payload: text,
+    });
+  }
+
+  if (status !== 200) {
     try {
       const j = JSON.parse(text) as { jsonrpc?: string };
       if (j && j.jsonrpc === "2.0") {
@@ -154,7 +214,7 @@ export async function POST(req: Request) {
   }
 
   return new NextResponse(text, {
-    status: res.status,
+    status,
     headers: { "Content-Type": "application/json" },
   });
 }

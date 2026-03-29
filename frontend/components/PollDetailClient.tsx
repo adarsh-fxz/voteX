@@ -2,15 +2,28 @@
 
 import { useWallet } from "@solana/wallet-adapter-react";
 import BN from "bn.js";
+import bs58Import from "bs58";
 import dynamic from "next/dynamic";
+import {
+  ChartNoAxesCombined,
+  ChevronDown,
+  Clock3,
+  ExternalLink,
+  Landmark,
+  Lock,
+  MapPinned,
+  ShieldCheck,
+  StickyNote,
+  Vote,
+} from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PublicKey } from "@solana/web3.js";
-import bs58Import from "bs58";
+import { Badge } from "@/components/ui/badge";
 import { useVotexProgram } from "@/hooks/useVotexProgram";
 import {
-  ipfsGatewayHrefFromStored,
   ONCHAIN_IPFS_REF_MAX_LEN,
+  SOLANA_CLUSTER_LABEL,
 } from "@/lib/constants";
 import { buildMerkleTree, merkleProof } from "@/lib/merkle";
 import {
@@ -26,57 +39,200 @@ import {
   ratingResultPda,
   voterPda,
 } from "@/lib/pdas";
-import {
-  accessModeLabel,
-  fetchCandidatesForPoll,
-  nowUnix,
-  pollKindLabel,
-  pollPhase,
-  type PollAccount,
-} from "@/lib/poll-utils";
+import { nowUnix } from "@/lib/poll-utils";
 
-const RechartsChart = dynamic(
+const ResultsChart = dynamic(
   () =>
     import("recharts").then((m) => {
-      const { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } = m;
-      function Chart({ data }: { data: { t: string; v: number }[] }) {
+      const {
+        Bar,
+        BarChart,
+        CartesianGrid,
+        ResponsiveContainer,
+        Tooltip,
+        XAxis,
+        YAxis,
+      } = m;
+
+      function Chart({ data }: { data: { name: string; percent: number }[] }) {
         return (
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data}>
-              <XAxis dataKey="t" />
-              <YAxis />
-              <Tooltip />
-              <Line dataKey="v" stroke="var(--primary)" dot />
-            </LineChart>
+            <BarChart
+              data={data}
+              margin={{ top: 10, right: 8, left: -20, bottom: 0 }}
+            >
+              <CartesianGrid
+                vertical={false}
+                stroke="rgba(148, 163, 184, 0.18)"
+              />
+              <XAxis
+                dataKey="name"
+                tickLine={false}
+                axisLine={false}
+                fontSize={12}
+              />
+              <YAxis
+                tickFormatter={(value) => `${value}%`}
+                tickLine={false}
+                axisLine={false}
+                fontSize={12}
+                width={40}
+              />
+              <Tooltip
+                cursor={{ fill: "rgba(125, 211, 252, 0.08)" }}
+                formatter={(value: number) => [
+                  `${Math.round(value)}%`,
+                  "Share",
+                ]}
+              />
+              <Bar
+                dataKey="percent"
+                fill="url(#pollResults)"
+                radius={[10, 10, 4, 4]}
+              />
+              <defs>
+                <linearGradient id="pollResults" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#8b5cf6" />
+                  <stop offset="100%" stopColor="#38bdf8" />
+                </linearGradient>
+              </defs>
+            </BarChart>
           </ResponsiveContainer>
         );
       }
+
       return Chart;
     }),
   {
     ssr: false,
     loading: () => (
-      <div className="h-full animate-pulse rounded bg-slate-100" />
+      <div className="h-full animate-pulse rounded-2xl bg-muted/70" />
     ),
   },
 );
 
+type PollOverview = {
+  id: string;
+  title: string;
+  description: string;
+  kind: "normal" | "rating";
+  kindLabel: string;
+  accessMode: "open" | "merkleRestricted";
+  accessLabel: string;
+  phase: string;
+  creator: string;
+  isFrozen: boolean;
+  registrationEnd: number;
+  votingStart: number;
+  votingEnd: number;
+  metaHref: string | null;
+  contentCid: string | null;
+  explorerHref: string;
+  totalVotes: number;
+  candidates: Array<{
+    cid: string;
+    name: string;
+    votes: number;
+    percent: number;
+  }>;
+};
+
 type Props = { pollIdStr: string };
+
+function formatPercent(value: number) {
+  return `${Math.round(value)}%`;
+}
+
+function formatDateTime(timestamp: number) {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(timestamp * 1000));
+}
+
+function formatShortCountdown(targetUnix: number) {
+  const diff = Math.max(targetUnix - nowUnix(), 0);
+  const days = Math.floor(diff / 86400);
+  const hours = Math.floor((diff % 86400) / 3600);
+  const minutes = Math.floor((diff % 3600) / 60);
+
+  if (days > 0) return `${days}d left`;
+  if (hours > 0) return `${hours}h left`;
+  if (minutes > 0) return `${minutes}m left`;
+  return "Ending soon";
+}
+
+function phaseLabel(phase: string) {
+  if (phase === "voting") return "Active";
+  if (phase === "ended") return "Ended";
+  return "Upcoming";
+}
+
+function phaseTone(phase: string) {
+  if (phase === "voting") {
+    return "border-emerald-500/20 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300";
+  }
+  if (phase === "ended") {
+    return "border-border/70 bg-background/70 text-muted-foreground";
+  }
+  return "border-sky-500/20 bg-sky-500/12 text-sky-700 dark:text-sky-300";
+}
+
+function generatedCoverClass(id: string) {
+  const index = Number(id) % 4;
+  const variants = [
+    "from-sky-100 via-white to-cyan-100 dark:from-slate-800 dark:via-slate-900 dark:to-cyan-950/70",
+    "from-emerald-100 via-white to-teal-100 dark:from-slate-800 dark:via-slate-900 dark:to-emerald-950/70",
+    "from-indigo-100 via-white to-sky-100 dark:from-slate-800 dark:via-slate-900 dark:to-indigo-950/70",
+    "from-cyan-100 via-white to-blue-100 dark:from-slate-800 dark:via-slate-900 dark:to-sky-950/70",
+  ] as const;
+  return variants[index];
+}
+
+function PollCoverArtwork({
+  title,
+  kind,
+  pollId,
+}: {
+  title: string;
+  kind: string;
+  pollId: string;
+}) {
+  return (
+    <div
+      className={`relative h-40 overflow-hidden rounded-[1.5rem] border border-border/70 bg-linear-to-br ${generatedCoverClass(
+        pollId,
+      )}`}
+    >
+      <div className="absolute inset-0 opacity-40 bg-[linear-gradient(to_right,rgba(148,163,184,0.14)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.14)_1px,transparent_1px)] bg-size-[26px_26px]" />
+      <div className="absolute left-1/2 top-4 h-24 w-24 -translate-x-1/2 rounded-full border border-white/40 bg-white/30 blur-2xl dark:border-primary/10 dark:bg-primary/10" />
+      <div className="absolute inset-x-0 bottom-6 flex justify-center">
+        <div className="rounded-sm bg-red-600 px-4 py-2 text-sm font-extrabold uppercase tracking-[0.08em] text-white shadow-lg">
+          {kind}
+        </div>
+      </div>
+      <div className="absolute inset-x-0 bottom-0 flex justify-center">
+        <div className="flex h-20 w-20 items-center justify-center rounded-t-full border border-border/60 border-b-0 bg-white/55 backdrop-blur dark:bg-slate-900/40">
+          <Landmark className="size-9 text-primary/70" />
+        </div>
+      </div>
+      <div className="absolute left-4 top-4 rounded-full border border-white/50 bg-white/60 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-700 backdrop-blur dark:border-white/10 dark:bg-slate-900/50 dark:text-slate-200">
+        {title.slice(0, 22)}
+      </div>
+    </div>
+  );
+}
 
 export function PollDetailClient({ pollIdStr }: Props) {
   const { publicKey } = useWallet();
-  const { program, readonlyProgram } = useVotexProgram();
-  const [poll, setPoll] = useState<PollAccount | null>(null);
-  const [cands, setCands] = useState<{ cid: BN; name: string; votes: BN }[]>(
-    [],
-  );
-  const [ratings, setRatings] = useState<{ cid: BN; total: BN; count: BN }[]>(
-    [],
-  );
+  const { program } = useVotexProgram();
+  const [overview, setOverview] = useState<PollOverview | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const programId = useMemo(() => votexProgramId(), []);
   const pid = useMemo(() => new BN(pollIdStr), [pollIdStr]);
   const loadGenRef = useRef(0);
 
@@ -85,44 +241,15 @@ export function PollDetailClient({ pollIdStr }: Props) {
     setErr(null);
     setLoading(true);
     try {
-      const p = await readonlyProgram.account.poll.fetch(
-        pollPda(programId, pid),
-      );
-      if (gen !== loadGenRef.current) return;
-      setPoll(p as PollAccount);
-      const list = await fetchCandidatesForPoll(readonlyProgram, pid);
-      if (gen !== loadGenRef.current) return;
-      const rows = list
-        .map((x) => x.account)
-        .sort((a, b) => a.cid.cmp(b.cid))
-        .map((a) => ({
-          cid: a.cid,
-          name: a.name,
-          votes: a.votes,
-        }));
-      setCands(rows);
-
-      if ("rating" in (p as PollAccount).kind && rows.length > 0) {
-        const pdas = rows.map((row) =>
-          ratingResultPda(programId, pid, row.cid),
-        );
-        const fetched =
-          await readonlyProgram.account.ratingResult.fetchMultiple(pdas);
-        if (gen !== loadGenRef.current) return;
-        const rr: { cid: BN; total: BN; count: BN }[] = [];
-        for (let i = 0; i < rows.length; i++) {
-          const acc = fetched[i];
-          if (!acc) continue;
-          rr.push({
-            cid: rows[i].cid,
-            total: acc.totalScore,
-            count: acc.voteCount,
-          });
-        }
-        setRatings(rr);
-      } else {
-        setRatings([]);
+      const res = await fetch(`/api/polls/${pollIdStr}/overview`, {
+        cache: "no-store",
+      });
+      const data = (await res.json()) as PollOverview & { error?: string };
+      if (!res.ok) {
+        throw new Error(data.error ?? "Failed to load poll");
       }
+      if (gen !== loadGenRef.current) return;
+      setOverview(data);
     } catch (e) {
       if (gen === loadGenRef.current) {
         setErr(e instanceof Error ? e.message : "Failed to load poll");
@@ -132,154 +259,368 @@ export function PollDetailClient({ pollIdStr }: Props) {
         setLoading(false);
       }
     }
-  }, [pid, programId, readonlyProgram]);
+  }, [pollIdStr]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   if (loading) {
-    return <p className="text-muted">Loading poll…</p>;
-  }
-  if (err || !poll) {
-    return <p className="text-red-600">{err ?? "Poll not found"}</p>;
+    return (
+      <div className="glass-panel rounded-[1.75rem] px-5 py-8 text-muted-foreground">
+        Loading poll…
+      </div>
+    );
   }
 
-  const phase = pollPhase(poll);
-  const metaHref = ipfsGatewayHrefFromStored(poll.metadataUri);
+  if (err || !overview) {
+    return (
+      <div className="rounded-[1.5rem] border border-destructive/30 bg-destructive/10 px-5 py-4 text-sm text-destructive">
+        {err ?? "Poll not found"}
+      </div>
+    );
+  }
 
+  const isCreator = publicKey?.toBase58() === overview.creator;
+  const chartData = overview.candidates.map((candidate) => ({
+    name: candidate.name,
+    percent: Math.round(candidate.percent),
+  }));
   return (
     <div className="space-y-8">
-      <div>
-        <p className="text-sm text-muted">
-          {pollKindLabel(poll.kind)} · {accessModeLabel(poll.accessMode)} ·
-          Phase: <strong>{phase}</strong>
-        </p>
-        {metaHref && (
-          <a
-            href={metaHref}
-            target="_blank"
-            rel="noreferrer"
-            className="text-sm text-primary hover:underline"
-          >
-            Metadata (IPFS)
-          </a>
-        )}
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_360px]">
+        <div className="space-y-6">
+          <section className="glass-panel rounded-[1.85rem] p-5 sm:p-6">
+            <div className="grid gap-5 md:grid-cols-[220px_minmax(0,1fr)]">
+              <PollCoverArtwork
+                title={overview.title}
+                kind={overview.kindLabel}
+                pollId={overview.id}
+              />
+              <div>
+                <h2 className="font-heading text-3xl font-semibold tracking-[-0.05em] text-foreground sm:text-4xl">
+                  {overview.title}
+                </h2>
+                <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                  <span className="inline-flex items-center gap-2">
+                    <ShieldCheck className="size-4 text-primary" />
+                    {overview.creator.slice(0, 8)}…{overview.creator.slice(-6)}
+                  </span>
+                  <span className="inline-flex items-center gap-2">
+                    <Clock3 className="size-4 text-primary" />
+                    {overview.phase === "voting"
+                      ? formatShortCountdown(overview.votingEnd)
+                      : overview.phase === "ended"
+                        ? "Voting ended"
+                        : `Starts ${formatDateTime(overview.votingStart)}`}
+                  </span>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Badge
+                    variant="outline"
+                    className={`rounded-full px-3 py-1 text-sm ${phaseTone(
+                      overview.phase,
+                    )}`}
+                  >
+                    <span className="size-2 rounded-full bg-current opacity-75" />
+                    {phaseLabel(overview.phase)}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className="rounded-full border-border/70 bg-background/65 px-3 py-1 text-sm text-muted-foreground"
+                  >
+                    <ChartNoAxesCombined className="size-3.5" />
+                    {overview.totalVotes} vote
+                    {overview.totalVotes === 1 ? "" : "s"}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className="rounded-full border-border/70 bg-background/65 px-3 py-1 text-sm text-muted-foreground"
+                  >
+                    <MapPinned className="size-3.5" />
+                    {SOLANA_CLUSTER_LABEL}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className="rounded-full border-border/70 bg-background/65 px-3 py-1 text-sm text-muted-foreground"
+                  >
+                    <Vote className="size-3.5" />
+                    {overview.kindLabel}
+                  </Badge>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="glass-panel rounded-[1.85rem] p-5 sm:p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <div className="rounded-full bg-rose-500/14 px-4 py-2 text-sm font-medium text-rose-700 dark:text-rose-300">
+                  All outcomes
+                </div>
+                <div className="rounded-full border border-border/70 bg-background/60 px-4 py-2 text-sm text-muted-foreground">
+                  Results snapshot
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {["1H", "24H", "7D", "All"].map((label, index) => (
+                  <button
+                    key={label}
+                    type="button"
+                    className={`rounded-full px-4 py-2 text-sm ${
+                      index === 3
+                        ? "bg-rose-500/14 text-rose-700 dark:text-rose-300"
+                        : "border border-border/70 bg-background/60 text-muted-foreground"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-[1.5rem] border border-border/70 bg-background/45 p-4">
+              <div className="mb-4 flex flex-wrap gap-4 text-sm">
+                {overview.candidates.map((candidate, index) => (
+                  <div key={candidate.cid} className="flex items-center gap-2">
+                    <span
+                      className={`size-2.5 rounded-full ${
+                        index === 0
+                          ? "bg-violet-500"
+                          : index === 1
+                            ? "bg-orange-500"
+                            : "bg-sky-500"
+                      }`}
+                    />
+                    <span>{candidate.name}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="h-72">
+                <ResultsChart data={chartData} />
+              </div>
+            </div>
+          </section>
+
+          <details className="group rounded-[1.85rem] border border-rose-500/20 bg-rose-500/10 p-5 sm:p-6 open:[&_.rules-chevron]:rotate-180">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
+              <div className="flex min-w-0 flex-1 items-center gap-2 text-foreground">
+                <ShieldCheck className="size-5 shrink-0 text-rose-500" />
+                <h3 className="text-xl font-semibold tracking-[-0.03em]">
+                  Rules
+                </h3>
+              </div>
+              <ChevronDown className="rules-chevron size-5 shrink-0 text-rose-500 transition-transform duration-200" />
+            </summary>
+            <div className="mt-3 rounded-[1.35rem] border border-rose-500/15 bg-background/75 p-5 text-sm text-foreground/92">
+              <p>
+                This poll measures public opinion among verified users. Each
+                user may cast one vote per poll, and once submitted, votes
+                cannot be changed or withdrawn.
+              </p>
+              <p><br />
+                The poll resolves based on aggregated valid responses submitted
+                before the designated closing time. Votes submitted after the
+                poll closes will not be counted.
+              </p>
+              <p><br />Responses are considered valid only if:</p>
+              <ul className="list-disc pl-10 text-foreground/90">
+                <li>The user selects one of the predefined options.</li>
+                <li>The poll is active at the time of submission.</li>
+                <li>
+                  The participant is a verified user, ensuring protection
+                  against duplicate or automated voting.
+                </li>
+              </ul>
+              <p><br />
+                Participation is limited to verified users to preserve the
+                integrity, fairness, and reliability of the poll results.
+              </p>
+              <p><br />
+                Poll results reflect public sentiment at the time of voting and
+                are not legally binding. VoteX records results in a verifiable
+                and auditable manner while keeping individual votes private.
+              </p>
+              <p><br />
+                The poll may resolve early if a clearly defined majority
+                threshold is reached before the scheduled closing time.
+                Otherwise, it resolves at the stated end time.
+              </p>
+            </div>
+          </details>
+
+          <details className="group rounded-[1.85rem] border border-rose-500/20 bg-rose-500/10 p-5 sm:p-6 open:[&_.notes-chevron]:rotate-180">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
+              <div className="flex min-w-0 flex-1 items-center gap-2 text-foreground">
+                <StickyNote className="size-5 shrink-0 text-rose-500" />
+                <h3 className="text-xl font-semibold tracking-[-0.03em]">
+                  Creator notes
+                </h3>
+              </div>
+              <ChevronDown className="notes-chevron size-5 shrink-0 text-rose-500 transition-transform duration-200" />
+            </summary>
+            <div className="mt-5 rounded-[1.35rem] border border-rose-500/15 bg-background/75 p-5 text-sm leading-7 text-foreground/92">
+              {overview.description ? (
+                <p className="whitespace-pre-wrap border-l-[3px] border-rose-400/55 pl-4 dark:border-rose-400/40">
+                  {overview.description}
+                </p>
+              ) : (
+                <p className="rounded-lg border border-rose-500/20 bg-rose-500/8 px-3 py-2.5 text-rose-800 dark:text-rose-200/90">
+                  No creator description has been provided for this poll.
+                </p>
+              )}
+            </div>
+          </details>
+        </div>
+
+        <aside className="space-y-6">
+          <section className="glass-panel rounded-[1.85rem] p-5 sm:p-6">
+            <h3 className="text-center font-heading text-3xl font-semibold tracking-[-0.05em]">
+              Vote overview
+            </h3>
+            <p className="mt-3 text-center text-sm leading-7 text-muted-foreground">
+              Results are computed from the current on-chain state and presented
+              without additional client RPC bootstrapping.
+            </p>
+
+            <div className="mt-6 space-y-3">
+              {overview.candidates.map((candidate, index) => (
+                <div
+                  key={candidate.cid}
+                  className={`rounded-[1.25rem] border px-4 py-3 ${
+                    index === 0
+                      ? "border-violet-500/40 bg-violet-500/8"
+                      : index === 1
+                        ? "border-rose-500/30 bg-rose-500/6"
+                        : "border-emerald-500/25 bg-emerald-500/6"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-medium text-foreground">
+                      {candidate.name}
+                    </span>
+                    <span className="text-lg font-semibold text-foreground">
+                      {formatPercent(candidate.percent)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-5 rounded-[1.25rem] border border-border/70 bg-background/55 px-4 py-4 text-center text-sm text-muted-foreground">
+              <Lock className="mx-auto mb-2 size-4 text-primary" />
+              Live poll detail loaded through a single cached overview request.
+            </div>
+
+            <div className="mt-5 grid gap-3">
+              <a
+                href={overview.explorerHref}
+                target="_blank"
+                rel="noreferrer"
+                className="button-primary-premium justify-center gap-2 text-sm"
+              >
+                View on Solana Explorer
+                <ExternalLink className="size-4" />
+              </a>
+              {overview.metaHref ? (
+                <a
+                  href={overview.metaHref}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="button-secondary-premium justify-center gap-2 text-sm"
+                >
+                  Open metadata
+                  <ExternalLink className="size-4" />
+                </a>
+              ) : null}
+            </div>
+          </section>
+
+          <section className="glass-panel rounded-[1.85rem] p-5 sm:p-6">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-2xl font-semibold tracking-[-0.04em]">
+                Poll metadata
+              </h3>
+              <span className="text-sm text-muted-foreground">
+                PID #{overview.id}
+              </span>
+            </div>
+            <div className="mt-6 space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <span
+                  className={`rounded-md border px-4 py-2 text-sm ${phaseTone(overview.phase)}`}
+                >
+                  {phaseLabel(overview.phase)}
+                </span>
+                <span className="text-sm text-muted-foreground">
+                  {formatDateTime(
+                    overview.phase === "ended"
+                      ? overview.votingEnd
+                      : overview.votingStart,
+                  )}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-background/55 px-4 py-3">
+                <span className="text-sm font-medium text-foreground">
+                  Created window
+                </span>
+                <span className="text-sm text-muted-foreground">
+                  {formatDateTime(overview.registrationEnd)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-background/55 px-4 py-3">
+                <span className="text-sm font-medium text-foreground">
+                  Voting closes
+                </span>
+                <span className="text-sm text-muted-foreground">
+                  {formatDateTime(overview.votingEnd)}
+                </span>
+              </div>
+            </div>
+          </section>
+        </aside>
       </div>
 
-      {poll.contentCid && (
-        <p className="text-sm">
-          Voter list CID:{" "}
-          <code className="rounded bg-slate-100 px-1">{poll.contentCid}</code>
-        </p>
-      )}
+      <div className="space-y-6">
+        {publicKey &&
+          isCreator &&
+          overview.accessMode === "merkleRestricted" &&
+          overview.phase === "registration" && (
+            <InviteManagerPanel pollId={pid} />
+          )}
 
-      <section>
-        <h2 className="text-lg font-semibold">Results</h2>
-        {"normal" in poll.kind ? (
-          <ul className="mt-2 space-y-2">
-            {cands.map((c) => (
-              <li key={c.cid.toString()} className="flex justify-between">
-                <span>{c.name}</span>
-                <span className="text-muted">{c.votes.toString()} votes</span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <ul className="mt-2 space-y-2">
-            {ratings.map((r) => (
-              <li key={r.cid.toString()} className="flex justify-between">
-                <span>
-                  {cands.find((c) => c.cid.eq(r.cid))?.name ?? r.cid.toString()}
-                </span>
-                <span className="text-muted">
-                  total {r.total.toString()} / {r.count.toString()} ratings
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+        {publicKey &&
+          !isCreator &&
+          overview.accessMode === "merkleRestricted" &&
+          overview.phase === "registration" && (
+            <RegisterWithInvitePanel pollId={pid} publicKey={publicKey} />
+          )}
 
-      <section className="h-48">
-        <h2 className="text-lg font-semibold">Activity (placeholder)</h2>
-        <RechartsChart
-          data={[
-            { t: "Committed", v: Number(poll.committedVoterCount) },
-            {
-              t: "Voted",
-              v: cands.reduce((s, c) => s + c.votes.toNumber(), 0),
-            },
-          ]}
-        />
-      </section>
+        {publicKey &&
+          program &&
+          isCreator &&
+          overview.accessMode === "merkleRestricted" &&
+          !overview.isFrozen &&
+          nowUnix() > overview.registrationEnd &&
+          nowUnix() < overview.votingStart && (
+            <CommitPanel pollId={pid} program={program} onDone={load} />
+          )}
 
-      <ExplorerLink pollId={pollIdStr} />
-
-      {/* ── Invite manager: creator only, during registration phase ── */}
-      {publicKey &&
-        poll.creator.equals(publicKey) &&
-        "merkleRestricted" in poll.accessMode &&
-        phase === "registration" && <InviteManagerPanel pollId={pid} />}
-
-      {/* ── Register with invite: non-creator voters, during registration phase ── */}
-      {publicKey &&
-        !poll.creator.equals(publicKey) &&
-        "merkleRestricted" in poll.accessMode &&
-        phase === "registration" && (
-          <RegisterWithInvitePanel pollId={pid} publicKey={publicKey} />
-        )}
-
-      {/* ── Commit eligibility: creator, after registration ends, before voting starts ── */}
-      {publicKey &&
-        program &&
-        poll.creator.equals(publicKey) &&
-        "merkleRestricted" in poll.accessMode &&
-        !poll.isFrozen &&
-        nowUnix() > poll.registrationEnd.toNumber() &&
-        nowUnix() < poll.votingStart.toNumber() && (
-          <CommitPanel
+        {publicKey && program && overview.phase === "voting" && (
+          <VotePanel
+            kind={overview.kind}
+            accessMode={overview.accessMode}
             pollId={pid}
-            poll={poll}
+            candidates={overview.candidates}
             program={program}
+            publicKey={publicKey}
             onDone={load}
           />
         )}
-
-      {/* ── Vote / rate: anyone connected, during voting phase ── */}
-      {publicKey && program && phase === "voting" && (
-        <VotePanel
-          poll={poll}
-          pollId={pid}
-          candidates={cands}
-          program={program}
-          publicKey={publicKey}
-        />
-      )}
+      </div>
     </div>
   );
 }
-
-function ExplorerLink({ pollId }: { pollId: string }) {
-  const cluster = process.env.NEXT_PUBLIC_SOLANA_CLUSTER ?? "devnet";
-  const address = pollPda(votexProgramId(), new BN(pollId)).toBase58();
-  const clusterParam = cluster === "mainnet-beta" ? "" : `?cluster=${cluster}`;
-  const href = `https://explorer.solana.com/address/${address}${clusterParam}`;
-  return (
-    <p className="text-sm">
-      <a
-        href={href}
-        target="_blank"
-        rel="noreferrer"
-        className="text-primary hover:underline"
-      >
-        View poll PDA on Explorer
-      </a>
-    </p>
-  );
-}
-
-// Invite Manager (poll creator only, during registration phase)
 
 function InviteManagerPanel({ pollId }: { pollId: BN }) {
   const pollIdStr = pollId.toString();
@@ -343,18 +684,17 @@ function InviteManagerPanel({ pollId }: { pollId: BN }) {
   }, [pollIdStr]);
 
   return (
-    <section className="space-y-4 rounded-lg border border-border bg-surface p-5">
+    <section className="glass-panel space-y-4 rounded-[1.75rem] p-5">
       <div>
         <h3 className="font-semibold">Invite manager</h3>
-        <p className="mt-1 text-sm text-muted">
+        <p className="mt-1 text-sm text-muted-foreground">
           Generate one-time invite codes during the registration window. Share
           each code privately with one voter. After voting opens you must commit
           eligibility.
         </p>
       </div>
 
-      {/* Generate controls */}
-      <div className="flex items-end gap-3">
+      <div className="flex flex-wrap items-end gap-3">
         <label className="block text-sm">
           How many codes
           <input
@@ -363,26 +703,25 @@ function InviteManagerPanel({ pollId }: { pollId: BN }) {
             max={100}
             value={count}
             onChange={(e) => setCount(Number(e.target.value))}
-            className="mt-1 w-24 rounded border border-border bg-background px-2 py-1"
+            className="input-premium mt-2 w-28"
           />
         </label>
         <button
           type="button"
           disabled={busy}
           onClick={generate}
-          className="rounded bg-primary px-4 py-2 text-sm text-white disabled:opacity-50"
+          className="button-primary-premium disabled:opacity-50"
         >
           {busy ? "Generating…" : "Generate codes"}
         </button>
       </div>
 
       {msg && (
-        <p className="rounded bg-blue-50 px-3 py-2 text-sm text-blue-800">
+        <p className="rounded-2xl border border-primary/20 bg-primary/10 px-3 py-2 text-sm text-foreground">
           {msg}
         </p>
       )}
 
-      {/* Generated code list */}
       {codes.length > 0 && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
@@ -392,12 +731,12 @@ function InviteManagerPanel({ pollId }: { pollId: BN }) {
             <button
               type="button"
               onClick={copyAll}
-              className="rounded border border-border px-2 py-1 text-xs hover:bg-slate-50"
+              className="button-secondary-premium px-3 py-2 text-xs"
             >
               {copied === "__all__" ? "Copied all!" : "Copy all"}
             </button>
           </div>
-          <ul className="max-h-48 divide-y divide-border overflow-y-auto rounded border border-border">
+          <ul className="max-h-48 divide-y divide-border overflow-y-auto rounded-[1.2rem] border border-border/70 bg-background/55">
             {codes.map((c) => (
               <li
                 key={c}
@@ -407,7 +746,7 @@ function InviteManagerPanel({ pollId }: { pollId: BN }) {
                 <button
                   type="button"
                   onClick={() => copyCode(c)}
-                  className="ml-4 rounded border border-border px-2 py-0.5 text-xs hover:bg-slate-50"
+                  className="button-secondary-premium ml-4 px-3 py-1 text-xs"
                 >
                   {copied === c ? "Copied!" : "Copy"}
                 </button>
@@ -417,7 +756,6 @@ function InviteManagerPanel({ pollId }: { pollId: BN }) {
         </div>
       )}
 
-      {/* Registered wallets */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium">
@@ -427,15 +765,17 @@ function InviteManagerPanel({ pollId }: { pollId: BN }) {
             type="button"
             onClick={refreshRegistrations}
             disabled={loadingRegs}
-            className="rounded border border-border px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50"
+            className="button-secondary-premium px-3 py-2 text-xs disabled:opacity-50"
           >
             {loadingRegs ? "Refreshing…" : "Refresh"}
           </button>
         </div>
         {registrations.length === 0 ? (
-          <p className="text-sm text-muted">No wallets registered yet.</p>
+          <p className="text-sm text-muted-foreground">
+            No wallets registered yet.
+          </p>
         ) : (
-          <ul className="max-h-48 divide-y divide-border overflow-y-auto rounded border border-border">
+          <ul className="max-h-48 divide-y divide-border overflow-y-auto rounded-[1.2rem] border border-border/70 bg-background/55">
             {registrations.map((pk) => (
               <li key={pk} className="px-3 py-2">
                 <code className="break-all font-mono text-xs">{pk}</code>
@@ -447,8 +787,6 @@ function InviteManagerPanel({ pollId }: { pollId: BN }) {
     </section>
   );
 }
-
-// Register with Invite (voter, during registration phase)
 
 function RegisterWithInvitePanel({
   pollId,
@@ -475,12 +813,10 @@ function RegisterWithInvitePanel({
     setBusy(true);
     setMsg(null);
     try {
-      // Canonical message — server verifies this exact string
       const message = new TextEncoder().encode(
         `register:${pollIdStr}:${publicKey.toBase58()}`,
       );
       const sigBytes = await signMessage(message);
-      // bs58-encode the raw Uint8Array signature
       const signature = bs58Import.encode(sigBytes);
 
       const res = await fetch(`/api/polls/${pollIdStr}/invites/register`, {
@@ -507,12 +843,12 @@ function RegisterWithInvitePanel({
   }
 
   return (
-    <section className="space-y-3 rounded-lg border border-border bg-surface p-5">
+    <section className="glass-panel space-y-3 rounded-[1.75rem] p-5">
       <div>
         <h3 className="font-semibold">Register to vote</h3>
-        <p className="mt-1 text-sm text-muted">
+        <p className="mt-1 text-sm text-muted-foreground">
           Enter the invite code the poll creator sent you. Your wallet (
-          <code className="rounded bg-slate-100 px-1 text-xs">
+          <code className="rounded-full border border-border/70 bg-background/70 px-3 py-1 text-xs">
             {publicKey.toBase58().slice(0, 8)}…{publicKey.toBase58().slice(-6)}
           </code>
           ) will sign a message to prove ownership, then be added to the voter
@@ -526,20 +862,24 @@ function RegisterWithInvitePanel({
           value={code}
           onChange={(e) => setCode(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && register()}
-          className="flex-1 rounded border border-border bg-background px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+          className="input-premium flex-1 font-mono text-sm"
         />
         <button
           type="button"
           disabled={busy || !code.trim()}
           onClick={register}
-          className="rounded bg-primary px-4 py-2 text-sm text-white disabled:opacity-50"
+          className="button-primary-premium disabled:opacity-50"
         >
           {busy ? "Signing & registering…" : "Register"}
         </button>
       </div>
       {msg && (
         <p
-          className={`rounded px-3 py-2 text-sm ${msg.ok ? "bg-green-50 text-green-800" : "bg-red-50 text-red-700"}`}
+          className={`rounded-2xl px-3 py-2 text-sm ${
+            msg.ok
+              ? "border border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+              : "border border-destructive/30 bg-destructive/10 text-destructive"
+          }`}
         >
           {msg.text}
         </p>
@@ -548,16 +888,12 @@ function RegisterWithInvitePanel({
   );
 }
 
-// CommitPanel
-
 function CommitPanel({
   pollId,
-  poll,
   program,
   onDone,
 }: {
   pollId: BN;
-  poll: PollAccount;
   program: NonNullable<ReturnType<typeof useVotexProgram>["program"]>;
   onDone: () => void;
 }) {
@@ -628,16 +964,16 @@ function CommitPanel({
   }
 
   return (
-    <section className="rounded border border-border p-4">
+    <section className="glass-panel rounded-[1.75rem] p-5">
       <h3 className="font-semibold">Commit eligibility</h3>
-      <p className="mt-1 text-sm text-muted">
+      <p className="mt-1 text-sm text-muted-foreground">
         Uploads canonical voter list + commits Merkle root (invites must be
         registered first).
       </p>
       <button
         type="button"
         disabled={busy}
-        className="mt-3 rounded bg-primary px-4 py-2 text-white disabled:opacity-50"
+        className="button-primary-premium mt-3 disabled:opacity-50"
         onClick={commit}
       >
         {busy ? "Committing…" : "Build list, pin, commit on-chain"}
@@ -648,26 +984,34 @@ function CommitPanel({
 }
 
 function VotePanel({
-  poll,
+  kind,
+  accessMode,
   pollId,
   candidates,
   program,
   publicKey,
+  onDone,
 }: {
-  poll: PollAccount;
+  kind: "normal" | "rating";
+  accessMode: "open" | "merkleRestricted";
   pollId: BN;
-  candidates: { cid: BN; name: string; votes: BN }[];
+  candidates: Array<{ cid: string; name: string; votes: number }>;
   program: NonNullable<ReturnType<typeof useVotexProgram>["program"]>;
   publicKey: PublicKey;
+  onDone: () => void;
 }) {
   const programId = votexProgramId();
-  const [sel, setSel] = useState<string>(candidates[0]?.cid.toString() ?? "");
+  const [sel, setSel] = useState<string>(candidates[0]?.cid ?? "");
   const [score, setScore] = useState(3);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    setSel(candidates[0]?.cid ?? "");
+  }, [candidates]);
+
   async function proofForWallet(): Promise<number[][]> {
-    if ("open" in poll.accessMode) return [];
+    if (accessMode === "open") return [];
     const res = await fetch(
       `/api/polls/${pollId.toString()}/invites/registrations`,
     );
@@ -700,6 +1044,7 @@ function VotePanel({
         })
         .rpc();
       setNote("Vote recorded.");
+      onDone();
     } catch (e) {
       setNote(e instanceof Error ? e.message : "Vote failed");
     } finally {
@@ -724,6 +1069,7 @@ function VotePanel({
         })
         .rpc();
       setNote("Rating submitted.");
+      onDone();
     } catch (e) {
       setNote(e instanceof Error ? e.message : "Rating failed");
     } finally {
@@ -732,26 +1078,26 @@ function VotePanel({
   }
 
   return (
-    <section className="rounded border border-border p-4">
+    <section className="glass-panel rounded-[1.75rem] p-5">
       <h3 className="font-semibold">Vote</h3>
-      <p className="mt-1 text-sm text-muted">
+      <p className="mt-1 text-sm text-muted-foreground">
         Merkle proofs are built from the invite registration list.
       </p>
       <label className="mt-3 block text-sm">
         Candidate
         <select
-          className="mt-1 w-full rounded border border-border px-2 py-1"
+          className="input-premium mt-2"
           value={sel}
           onChange={(e) => setSel(e.target.value)}
         >
           {candidates.map((c) => (
-            <option key={c.cid.toString()} value={c.cid.toString()}>
+            <option key={c.cid} value={c.cid}>
               {c.name}
             </option>
           ))}
         </select>
       </label>
-      {"rating" in poll.kind && (
+      {kind === "rating" && (
         <label className="mt-3 block text-sm">
           Score (1–5)
           <input
@@ -760,18 +1106,18 @@ function VotePanel({
             max={5}
             value={score}
             onChange={(e) => setScore(Number(e.target.value))}
-            className="ml-2"
+            className="ml-2 accent-primary"
           />
           <span className="ml-2">{score}</span>
         </label>
       )}
       {note && <p className="mt-2 text-sm">{note}</p>}
       <div className="mt-3 flex gap-2">
-        {"normal" in poll.kind ? (
+        {kind === "normal" ? (
           <button
             type="button"
             disabled={busy}
-            className="rounded bg-primary px-4 py-2 text-white"
+            className="button-primary-premium"
             onClick={voteNormal}
           >
             Submit vote
@@ -780,13 +1126,13 @@ function VotePanel({
           <button
             type="button"
             disabled={busy}
-            className="rounded bg-primary px-4 py-2 text-white"
+            className="button-primary-premium"
             onClick={voteRate}
           >
             Submit rating
           </button>
         )}
-        <Link href="/polls" className="rounded border px-4 py-2 text-sm">
+        <Link href="/polls" className="button-secondary-premium text-sm">
           All polls
         </Link>
       </div>

@@ -2,9 +2,13 @@
 
 import { useWallet } from "@solana/wallet-adapter-react";
 import BN from "bn.js";
+import { ArrowLeft, ArrowRight } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import { useVotexProgram } from "@/hooks/useVotexProgram";
+import { votexProgramId } from "@/lib/anchor";
+import { ONCHAIN_IPFS_REF_MAX_LEN } from "@/lib/constants";
 import {
   candidatePda,
   counterPda,
@@ -12,10 +16,12 @@ import {
   ratingResultPda,
   registrationsPda,
 } from "@/lib/pdas";
-import { votexProgramId } from "@/lib/anchor";
-import { ONCHAIN_IPFS_REF_MAX_LEN } from "@/lib/constants";
 
 type Step = 1 | 2 | 3 | 4;
+
+const steps = ["Details", "Access", "Schedule", "Candidates"] as const;
+const fieldClass = "input-premium mt-2";
+const surfaceClass = "glass-panel rounded-[1.85rem] p-5 sm:p-6";
 
 export function CreatePollWizard() {
   const router = useRouter();
@@ -155,185 +161,252 @@ export function CreatePollWizard() {
   }
 
   if (!publicKey) {
-    return <p className="text-muted">Connect a wallet to create a poll.</p>;
+    return (
+      <div className="glass-panel rounded-[1.75rem] px-5 py-8 text-muted-foreground">
+        Connect a wallet to create a poll.
+      </div>
+    );
   }
 
   return (
-    <div className="mx-auto max-w-lg space-y-6">
-      <div className="flex gap-2 text-sm text-muted">
+    <div className="mx-auto max-w-3xl space-y-6">
+      <div className="grid gap-3 sm:grid-cols-4">
         {[1, 2, 3, 4].map((s) => (
-          <span
+          <div
             key={s}
-            className={step === s ? "font-semibold text-foreground" : ""}
+            className={`rounded-[1.4rem] border px-4 py-3 text-sm transition ${
+              step === s
+                ? "border-primary/30 bg-primary/10 text-foreground shadow-[var(--shadow-soft)]"
+                : "border-border/70 bg-background/50 text-muted-foreground"
+            }`}
           >
-            {s}. {["Details", "Access", "Schedule", "Candidates"][s - 1]}
-          </span>
+            <p className="text-[0.68rem] font-medium uppercase tracking-[0.24em]">
+              Step {s}
+            </p>
+            <p className="mt-2 font-medium">{steps[s - 1]}</p>
+          </div>
         ))}
       </div>
 
       {step === 1 && (
-        <div className="space-y-4">
-          <label className="block">
-            <span className="text-sm font-medium">Title</span>
-            <input
-              className="mt-1 w-full rounded border border-border bg-surface px-3 py-2"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-            />
-          </label>
-          <label className="block">
-            <span className="text-sm font-medium">Description</span>
-            <textarea
-              className="mt-1 w-full rounded border border-border bg-surface px-3 py-2"
-              rows={4}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-          </label>
-          <button
-            type="button"
-            className="rounded bg-primary px-4 py-2 text-white"
-            onClick={() => setStep(2)}
-          >
-            Next
-          </button>
+        <div className={surfaceClass}>
+          <div className="mb-6 flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-[0.24em] text-primary">
+                Poll details
+              </p>
+              <h2 className="mt-2 font-heading text-2xl font-semibold tracking-[-0.04em]">
+                Frame the vote clearly from the start.
+              </h2>
+            </div>
+          </div>
+          <div className="space-y-4">
+            <label className="block">
+              <span className="text-sm font-medium">Title</span>
+              <input
+                className={fieldClass}
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+              />
+            </label>
+            <label className="block">
+              <span className="text-sm font-medium">Description</span>
+              <textarea
+                className={fieldClass}
+                rows={4}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
+            </label>
+            <Button
+              type="button"
+              className="button-primary-premium gap-2"
+              onClick={() => setStep(2)}
+            >
+              Next
+              <ArrowRight className="size-4" />
+            </Button>
+          </div>
         </div>
       )}
 
       {step === 2 && (
-        <div className="space-y-4">
-          <label className="flex items-center gap-2">
-            <input
-              type="radio"
-              checked={kind === "normal"}
-              onChange={() => setKind("normal")}
-            />
-            Normal (single choice)
-          </label>
-          <label className="flex items-center gap-2">
-            <input
-              type="radio"
-              checked={kind === "rating"}
-              onChange={() => setKind("rating")}
-            />
-            Rating (1–5 per candidate)
-          </label>
-          <label className="flex items-center gap-2">
-            <input
-              type="radio"
-              checked={access === "open"}
-              onChange={() => setAccess("open")}
-            />
-            Open voting
-          </label>
-          <label className="flex items-center gap-2">
-            <input
-              type="radio"
-              checked={access === "merkle"}
-              onChange={() => setAccess("merkle")}
-            />
-            Merkle-restricted (invite + commit)
-          </label>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className="rounded border px-4 py-2"
-              onClick={() => setStep(1)}
-            >
-              Back
-            </button>
-            <button
-              type="button"
-              className="rounded bg-primary px-4 py-2 text-white"
-              onClick={() => setStep(3)}
-            >
-              Next
-            </button>
+        <div className={surfaceClass}>
+          <div className="mb-6">
+            <p className="text-xs font-medium uppercase tracking-[0.24em] text-primary">
+              Voting access
+            </p>
+            <h2 className="mt-2 font-heading text-2xl font-semibold tracking-[-0.04em]">
+              Choose how people participate.
+            </h2>
+          </div>
+          <div className="space-y-4">
+            <label className="flex items-center gap-2">
+              <input
+                type="radio"
+                checked={kind === "normal"}
+                onChange={() => setKind("normal")}
+              />
+              Normal (single choice)
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="radio"
+                checked={kind === "rating"}
+                onChange={() => setKind("rating")}
+              />
+              Rating (1–5 per candidate)
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="radio"
+                checked={access === "open"}
+                onChange={() => setAccess("open")}
+              />
+              Open voting
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="radio"
+                checked={access === "merkle"}
+                onChange={() => setAccess("merkle")}
+              />
+              Merkle-restricted (invite + commit)
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="button-secondary-premium gap-2"
+                onClick={() => setStep(1)}
+              >
+                <ArrowLeft className="size-4" />
+                Back
+              </Button>
+              <Button
+                type="button"
+                className="button-primary-premium gap-2"
+                onClick={() => setStep(3)}
+              >
+                Next
+                <ArrowRight className="size-4" />
+              </Button>
+            </div>
           </div>
         </div>
       )}
 
       {step === 3 && (
-        <div className="space-y-4">
-          <p className="text-sm text-muted">
-            Local time → stored as Unix seconds.
-          </p>
-          <label className="block">
-            <span className="text-sm font-medium">Registration ends</span>
-            <input
-              type="datetime-local"
-              className="mt-1 w-full rounded border border-border bg-surface px-3 py-2"
-              value={regEnd}
-              onChange={(e) => setRegEnd(e.target.value)}
-            />
-          </label>
-          <label className="block">
-            <span className="text-sm font-medium">Voting starts</span>
-            <input
-              type="datetime-local"
-              className="mt-1 w-full rounded border border-border bg-surface px-3 py-2"
-              value={voteStart}
-              onChange={(e) => setVoteStart(e.target.value)}
-            />
-          </label>
-          <label className="block">
-            <span className="text-sm font-medium">Voting ends</span>
-            <input
-              type="datetime-local"
-              className="mt-1 w-full rounded border border-border bg-surface px-3 py-2"
-              value={voteEnd}
-              onChange={(e) => setVoteEnd(e.target.value)}
-            />
-          </label>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className="rounded border px-4 py-2"
-              onClick={() => setStep(2)}
-            >
-              Back
-            </button>
-            <button
-              type="button"
-              className="rounded bg-primary px-4 py-2 text-white"
-              onClick={() => setStep(4)}
-            >
-              Next
-            </button>
+        <div className={surfaceClass}>
+          <div className="mb-6">
+            <p className="text-xs font-medium uppercase tracking-[0.24em] text-primary">
+              Scheduling
+            </p>
+            <h2 className="mt-2 font-heading text-2xl font-semibold tracking-[-0.04em]">
+              Define the registration and voting window.
+            </h2>
+          </div>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Local time → stored as Unix seconds.
+            </p>
+            <label className="block">
+              <span className="text-sm font-medium">Registration ends</span>
+              <input
+                type="datetime-local"
+                className={fieldClass}
+                value={regEnd}
+                onChange={(e) => setRegEnd(e.target.value)}
+              />
+            </label>
+            <label className="block">
+              <span className="text-sm font-medium">Voting starts</span>
+              <input
+                type="datetime-local"
+                className={fieldClass}
+                value={voteStart}
+                onChange={(e) => setVoteStart(e.target.value)}
+              />
+            </label>
+            <label className="block">
+              <span className="text-sm font-medium">Voting ends</span>
+              <input
+                type="datetime-local"
+                className={fieldClass}
+                value={voteEnd}
+                onChange={(e) => setVoteEnd(e.target.value)}
+              />
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="button-secondary-premium gap-2"
+                onClick={() => setStep(2)}
+              >
+                <ArrowLeft className="size-4" />
+                Back
+              </Button>
+              <Button
+                type="button"
+                className="button-primary-premium gap-2"
+                onClick={() => setStep(4)}
+              >
+                Next
+                <ArrowRight className="size-4" />
+              </Button>
+            </div>
           </div>
         </div>
       )}
 
       {step === 4 && (
-        <div className="space-y-4">
-          <label className="block">
-            <span className="text-sm font-medium">
-              Candidates (one per line)
-            </span>
-            <textarea
-              className="mt-1 w-full rounded border border-border bg-surface px-3 py-2 font-mono text-sm"
-              rows={6}
-              value={candidatesText}
-              onChange={(e) => setCandidatesText(e.target.value)}
-            />
-          </label>
-          {err && <p className="text-sm text-red-600">{err}</p>}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className="rounded border px-4 py-2"
-              onClick={() => setStep(3)}
-            >
-              Back
-            </button>
-            <button
-              type="button"
-              disabled={loading}
-              className="rounded bg-primary px-4 py-2 text-white disabled:opacity-50"
-              onClick={onSubmit}
-            >
-              {loading ? "Submitting…" : "Create on-chain"}
-            </button>
+        <div className={surfaceClass}>
+          <div className="mb-6">
+            <p className="text-xs font-medium uppercase tracking-[0.24em] text-primary">
+              Candidates
+            </p>
+            <h2 className="mt-2 font-heading text-2xl font-semibold tracking-[-0.04em]">
+              Add each candidate as a clean ballot option.
+            </h2>
+          </div>
+          <div className="space-y-4">
+            <label className="block">
+              <span className="text-sm font-medium">
+                Candidates (one per line)
+              </span>
+              <textarea
+                className={`${fieldClass} font-mono text-sm`}
+                rows={6}
+                value={candidatesText}
+                onChange={(e) => setCandidatesText(e.target.value)}
+              />
+            </label>
+            {err && (
+              <p className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                {err}
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="button-secondary-premium gap-2"
+                onClick={() => setStep(3)}
+              >
+                <ArrowLeft className="size-4" />
+                Back
+              </Button>
+              <Button
+                type="button"
+                disabled={loading}
+                className="button-primary-premium gap-2 disabled:opacity-50"
+                onClick={onSubmit}
+              >
+                {loading ? "Submitting…" : "Create on-chain"}
+                {!loading && <ArrowRight className="size-4" />}
+              </Button>
+            </div>
           </div>
         </div>
       )}
