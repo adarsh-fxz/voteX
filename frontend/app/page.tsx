@@ -257,9 +257,6 @@ export default function Home() {
                     <p className="text-xs font-medium uppercase tracking-[0.28em] text-primary">
                       vote lifecycle
                     </p>
-                    <p className="mt-2 font-heading text-2xl font-semibold tracking-[-0.04em]">
-                      Premium interface, inspectable state
-                    </p>
                   </div>
                   <div className="rounded-full border border-primary/20 bg-primary/8 px-3 py-1 text-xs font-medium text-primary">
                     Solana + IPFS
@@ -556,7 +553,7 @@ export default function Home() {
                 Review live poll state
               </Link>
               <div className="rounded-2xl border border-white/10 bg-white/6 px-4 py-4 text-sm text-slate-300">
-                Includes wallet connect, theme support, responsive layout, and room to grow into a full product site.
+                Don’t Trust the Vote. Verify It.
               </div>
             </div>
           </div>

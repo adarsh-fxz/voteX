@@ -176,7 +176,7 @@ export function CreatePollWizard() {
             key={s}
             className={`rounded-[1.4rem] border px-4 py-3 text-sm transition ${
               step === s
-                ? "border-primary/30 bg-primary/10 text-foreground shadow-[var(--shadow-soft)]"
+                ? "border-primary/30 bg-primary/10 text-foreground shadow-(--shadow-soft)"
                 : "border-border/70 bg-background/50 text-muted-foreground"
             }`}
           >

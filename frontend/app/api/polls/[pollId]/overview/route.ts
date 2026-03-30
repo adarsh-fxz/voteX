@@ -42,6 +42,7 @@ type DetailOverview = {
     name: string;
     votes: number;
     percent: number;
+    avgScore: number | null;
   }>;
 };
 
@@ -127,6 +128,7 @@ async function buildDetailOverview(pollId: string): Promise<DetailOverview> {
       cid: candidate.account.cid.toString(),
       name: candidate.account.name,
       votes: candidate.account.votes.toNumber(),
+      avgScore: null as number | null,
     }))
     .sort((a, b) => b.votes - a.votes);
 
@@ -142,6 +144,11 @@ async function buildDetailOverview(pollId: string): Promise<DetailOverview> {
       .map((candidate, index) => ({
         ...candidate,
         votes: ratingResults[index]?.voteCount.toNumber() ?? 0,
+        avgScore:
+          (ratingResults[index]?.voteCount.toNumber() ?? 0) > 0
+            ? (ratingResults[index]?.totalScore.toNumber() ?? 0) /
+              (ratingResults[index]?.voteCount.toNumber() ?? 1)
+            : null,
       }))
       .sort((a, b) => b.votes - a.votes);
   }

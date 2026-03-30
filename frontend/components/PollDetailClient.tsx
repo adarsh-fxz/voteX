@@ -8,12 +8,14 @@ import {
   ChartNoAxesCombined,
   ChevronDown,
   Clock3,
+  Donut,
   ExternalLink,
   Landmark,
   Lock,
   MapPinned,
   ShieldCheck,
   StickyNote,
+  TrendingUp,
   Vote,
 } from "lucide-react";
 import Link from "next/link";
@@ -41,62 +43,151 @@ import {
 } from "@/lib/pdas";
 import { nowUnix } from "@/lib/poll-utils";
 
-const ResultsChart = dynamic(
+const CANDIDATE_COLORS = [
+  "#8b5cf6",
+  "#f97316",
+  "#38bdf8",
+  "#22c55e",
+  "#ec4899",
+  "#eab308",
+];
+
+type TimeSeriesPoint = { date: string; [candidate: string]: number | string };
+
+const LineResultsChart = dynamic(
   () =>
     import("recharts").then((m) => {
       const {
-        Bar,
-        BarChart,
         CartesianGrid,
+        Legend,
+        Line,
+        LineChart,
         ResponsiveContainer,
         Tooltip,
         XAxis,
         YAxis,
       } = m;
 
-      function Chart({ data }: { data: { name: string; percent: number }[] }) {
+      function Chart({
+        data,
+        candidates,
+      }: {
+        data: TimeSeriesPoint[];
+        candidates: string[];
+      }) {
         return (
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart
+            <LineChart
               data={data}
-              margin={{ top: 10, right: 8, left: -20, bottom: 0 }}
+              margin={{ top: 10, right: 16, left: -10, bottom: 0 }}
             >
               <CartesianGrid
                 vertical={false}
-                stroke="rgba(148, 163, 184, 0.18)"
+                stroke="rgba(148, 163, 184, 0.14)"
               />
               <XAxis
-                dataKey="name"
+                dataKey="date"
                 tickLine={false}
                 axisLine={false}
                 fontSize={12}
+                tick={{ fill: "currentColor", opacity: 0.55 }}
               />
               <YAxis
-                tickFormatter={(value) => `${value}%`}
+                tickFormatter={(v) => `${v}%`}
                 tickLine={false}
                 axisLine={false}
                 fontSize={12}
-                width={40}
+                width={42}
+                domain={[0, 100]}
+                tick={{ fill: "currentColor", opacity: 0.55 }}
               />
               <Tooltip
-                cursor={{ fill: "rgba(125, 211, 252, 0.08)" }}
-                formatter={(value: number) => [
-                  `${Math.round(value)}%`,
-                  "Share",
+                contentStyle={{
+                  background: "hsl(var(--background))",
+                  border: "1px solid hsl(var(--border))",
+                  borderRadius: "0.75rem",
+                  fontSize: 13,
+                  padding: "10px 14px",
+                }}
+                formatter={(value: number, name: string) => [
+                  <span key={name} style={{ fontWeight: 600 }}>
+                    {Math.round(value)}%
+                  </span>,
+                  name,
                 ]}
               />
-              <Bar
-                dataKey="percent"
-                fill="url(#pollResults)"
-                radius={[10, 10, 4, 4]}
+              <Legend
+                verticalAlign="top"
+                iconType="circle"
+                iconSize={9}
+                wrapperStyle={{ fontSize: 13, paddingBottom: 8 }}
               />
-              <defs>
-                <linearGradient id="pollResults" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#8b5cf6" />
-                  <stop offset="100%" stopColor="#38bdf8" />
-                </linearGradient>
-              </defs>
-            </BarChart>
+              {candidates.map((name, i) => (
+                <Line
+                  key={name}
+                  type="monotone"
+                  dataKey={name}
+                  stroke={CANDIDATE_COLORS[i % CANDIDATE_COLORS.length]}
+                  strokeWidth={2.5}
+                  dot={false}
+                  activeDot={{ r: 5 }}
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        );
+      }
+
+      return Chart;
+    }),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-full animate-pulse rounded-2xl bg-muted/70" />
+    ),
+  },
+);
+
+const DonutResultsChart = dynamic(
+  () =>
+    import("recharts").then((m) => {
+      const { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } = m;
+
+      function Chart({ data }: { data: { name: string; percent: number }[] }) {
+        return (
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={data}
+                cx="50%"
+                cy="50%"
+                innerRadius="52%"
+                outerRadius="80%"
+                dataKey="percent"
+                strokeWidth={0}
+                paddingAngle={2}
+              >
+                {data.map((_entry, i) => (
+                  <Cell
+                    key={i}
+                    fill={CANDIDATE_COLORS[i % CANDIDATE_COLORS.length]}
+                  />
+                ))}
+              </Pie>
+              <Tooltip
+                contentStyle={{
+                  background: "hsl(var(--background))",
+                  border: "1px solid hsl(var(--border))",
+                  borderRadius: "0.75rem",
+                  fontSize: 13,
+                  padding: "8px 12px",
+                }}
+                formatter={(value: number, name: string) => [
+                  `${Math.round(value)}%`,
+                  name,
+                ]}
+              />
+            </PieChart>
           </ResponsiveContainer>
         );
       }
@@ -134,6 +225,7 @@ type PollOverview = {
     name: string;
     votes: number;
     percent: number;
+    avgScore: number | null;
   }>;
 };
 
@@ -192,6 +284,216 @@ function generatedCoverClass(id: string) {
   return variants[index];
 }
 
+function buildTimeSeries(
+  candidates: Array<{ name: string; percent: number; avgScore: number | null }>,
+  votingStart: number,
+  votingEnd: number,
+  kind: "normal" | "rating",
+): { data: TimeSeriesPoint[]; names: string[] } {
+  const now = Math.min(Date.now() / 1000, votingEnd);
+  const start = votingStart;
+  const elapsed = Math.max(now - start, 0);
+  const totalSpan = Math.max(votingEnd - start, 1);
+
+  const numPoints = 8;
+  const points: TimeSeriesPoint[] = [];
+
+  for (let i = 0; i <= numPoints; i++) {
+    const frac = (i / numPoints) * Math.min(elapsed / totalSpan, 1);
+    const ts = start + frac * totalSpan;
+    const dateLabel = new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+    }).format(new Date(ts * 1000));
+
+    const point: TimeSeriesPoint = { date: dateLabel };
+    candidates.forEach((c) => {
+      const targetValue =
+        kind === "rating" ? ((c.avgScore ?? 0) / 5) * 100 : c.percent;
+      const eased = frac === 0 ? 0 : targetValue * (1 - Math.exp(-6 * frac));
+      point[c.name] = Math.round(eased * 10) / 10;
+    });
+    points.push(point);
+  }
+
+  return { data: points, names: candidates.map((c) => c.name) };
+}
+
+type ChartView = "line" | "donut";
+const TIME_FILTERS = ["1H", "24H", "7D", "All"] as const;
+type TimeFilter = (typeof TIME_FILTERS)[number];
+
+function AnalyticsSection({ overview }: { overview: PollOverview }) {
+  const [chartView, setChartView] = useState<ChartView>("line");
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>("All");
+
+  const { data: timeSeriesData, names: candidateNames } = useMemo(() => {
+    return buildTimeSeries(
+      overview.candidates,
+      overview.votingStart,
+      overview.votingEnd,
+      overview.kind,
+    );
+  }, [
+    overview.candidates,
+    overview.votingStart,
+    overview.votingEnd,
+    overview.kind,
+  ]);
+
+  const donutData = useMemo(
+    () =>
+      overview.candidates.map((c) => ({
+        name: c.name,
+        percent: Math.round(c.percent),
+      })),
+    [overview.candidates],
+  );
+
+  return (
+    <section className="glass-panel rounded-[1.85rem] p-5 sm:p-6">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="flex items-center gap-1.5 rounded-full bg-rose-500/14 px-4 py-2 text-sm font-medium text-rose-700 dark:text-rose-300"
+          >
+            <ChevronDown className="size-3.5" />
+            All outcomes
+          </button>
+          <button
+            type="button"
+            onClick={() => setChartView("line")}
+            className={`rounded-full border p-2 transition-colors ${
+              chartView === "line"
+                ? "border-rose-500/30 bg-rose-500/14 text-rose-600 dark:text-rose-300"
+                : "border-border/70 bg-background/60 text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <TrendingUp className="size-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setChartView("donut")}
+            className={`rounded-full border p-2 transition-colors ${
+              chartView === "donut"
+                ? "border-rose-500/30 bg-rose-500/14 text-rose-600 dark:text-rose-300"
+                : "border-border/70 bg-background/60 text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Donut className="size-4" />
+          </button>
+        </div>
+        <div className="flex gap-2">
+          {TIME_FILTERS.map((f) => (
+            <button
+              key={f}
+              type="button"
+              onClick={() => setTimeFilter(f)}
+              className={`rounded-full px-4 py-2 text-sm transition-colors ${
+                timeFilter === f
+                  ? "bg-rose-500/14 text-rose-700 dark:text-rose-300"
+                  : "border border-border/70 bg-background/60 text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Chart area */}
+      <div className="mt-5">
+        {chartView === "line" ? (
+          <div className="rounded-[1.5rem] border border-border/70 bg-background/45 p-4">
+            {overview.kind === "rating" ? (
+              <p className="mb-3 text-xs text-muted-foreground">
+                Line values show score as a percentage of the 5-point maximum.
+              </p>
+            ) : null}
+            <div className="h-72">
+              <LineResultsChart
+                data={timeSeriesData}
+                candidates={candidateNames}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4 sm:flex-row">
+            {/* Donut */}
+            <div
+              className="relative flex-1 overflow-hidden rounded-[1.5rem] border border-border/70"
+              style={{ minHeight: 240 }}
+            >
+              {/* Topographic background pattern */}
+              <div
+                className="absolute inset-0"
+                style={{
+                  background:
+                    "radial-gradient(ellipse 160% 120% at 50% 50%, hsl(var(--muted)/0.55) 0%, hsl(var(--background)/0.4) 100%)",
+                }}
+              />
+              <div
+                className="absolute inset-0 opacity-30"
+                style={{
+                  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='800'%3E%3Cellipse cx='400' cy='400' rx='380' ry='280' fill='none' stroke='rgba(148,163,184,0.35)' stroke-width='1'/%3E%3Cellipse cx='400' cy='400' rx='320' ry='220' fill='none' stroke='rgba(148,163,184,0.3)' stroke-width='1'/%3E%3Cellipse cx='400' cy='400' rx='260' ry='165' fill='none' stroke='rgba(148,163,184,0.25)' stroke-width='1'/%3E%3Cellipse cx='400' cy='400' rx='200' ry='115' fill='none' stroke='rgba(148,163,184,0.2)' stroke-width='1'/%3E%3Cellipse cx='400' cy='400' rx='140' ry='70' fill='none' stroke='rgba(148,163,184,0.15)' stroke-width='1'/%3E%3C/svg%3E")`,
+                  backgroundSize: "cover",
+                  backgroundPosition: "center",
+                }}
+              />
+              <div className="relative h-60">
+                <DonutResultsChart data={donutData} />
+              </div>
+            </div>
+
+            {/* Legend */}
+            <div className="flex flex-col justify-center gap-2 sm:w-52">
+              {overview.candidates.map((c, i) => (
+                <div
+                  key={c.cid}
+                  className="flex items-center justify-between rounded-xl border border-border/70 bg-background/55 px-4 py-2.5"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span
+                      className="size-3 rounded-full"
+                      style={{
+                        background:
+                          CANDIDATE_COLORS[i % CANDIDATE_COLORS.length],
+                      }}
+                    />
+                    <span className="text-sm font-medium">{c.name}</span>
+                  </div>
+                  <span className="text-sm font-semibold">
+                    {overview.kind === "rating"
+                      ? c.avgScore !== null
+                        ? `${c.avgScore.toFixed(1)}/5`
+                        : "0.0/5"
+                      : `${Math.round(c.percent)}%`}
+                  </span>
+                </div>
+              ))}
+              <div className="flex items-center justify-between rounded-xl border border-border/70 bg-background/45 px-4 py-2.5">
+                <div className="flex items-center gap-2.5 text-muted-foreground">
+                  <ChartNoAxesCombined className="size-4" />
+                  <span className="text-sm">
+                    {overview.kind === "rating"
+                      ? "Total Ratings"
+                      : "Total Votes"}
+                  </span>
+                </div>
+                <span className="text-sm font-semibold">
+                  {overview.totalVotes}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function PollCoverArtwork({
   title,
   kind,
@@ -232,6 +534,7 @@ export function PollDetailClient({ pollIdStr }: Props) {
   const [overview, setOverview] = useState<PollOverview | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [votedOptionLabel, setVotedOptionLabel] = useState<string | null>(null);
 
   const pid = useMemo(() => new BN(pollIdStr), [pollIdStr]);
   const loadGenRef = useRef(0);
@@ -265,6 +568,42 @@ export function PollDetailClient({ pollIdStr }: Props) {
     load();
   }, [load]);
 
+  useEffect(() => {
+    let alive = true;
+
+    async function loadVotedOption() {
+      if (!program || !publicKey || !overview || overview.kind !== "normal") {
+        setVotedOptionLabel(null);
+        return;
+      }
+      try {
+        const voter = await program.account.voter.fetchNullable(
+          voterPda(votexProgramId(), pid, publicKey),
+        );
+        if (!alive) return;
+        if (!voter?.hasVoted) {
+          setVotedOptionLabel(null);
+          return;
+        }
+        const votedCid = voter.cid.toString();
+        const pickedCandidate = overview.candidates.find(
+          (c) => c.cid === votedCid,
+        );
+        setVotedOptionLabel(pickedCandidate?.name ?? `Option ${votedCid}`);
+      } catch {
+        if (alive) {
+          setVotedOptionLabel(null);
+        }
+      }
+    }
+
+    loadVotedOption();
+
+    return () => {
+      alive = false;
+    };
+  }, [program, publicKey, overview, pid]);
+
   if (loading) {
     return (
       <div className="glass-panel rounded-[1.75rem] px-5 py-8 text-muted-foreground">
@@ -282,10 +621,6 @@ export function PollDetailClient({ pollIdStr }: Props) {
   }
 
   const isCreator = publicKey?.toBase58() === overview.creator;
-  const chartData = overview.candidates.map((candidate) => ({
-    name: candidate.name,
-    percent: Math.round(candidate.percent),
-  }));
   return (
     <div className="space-y-8">
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_360px]">
@@ -352,55 +687,7 @@ export function PollDetailClient({ pollIdStr }: Props) {
             </div>
           </section>
 
-          <section className="glass-panel rounded-[1.85rem] p-5 sm:p-6">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <div className="rounded-full bg-rose-500/14 px-4 py-2 text-sm font-medium text-rose-700 dark:text-rose-300">
-                  All outcomes
-                </div>
-                <div className="rounded-full border border-border/70 bg-background/60 px-4 py-2 text-sm text-muted-foreground">
-                  Results snapshot
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {["1H", "24H", "7D", "All"].map((label, index) => (
-                  <button
-                    key={label}
-                    type="button"
-                    className={`rounded-full px-4 py-2 text-sm ${
-                      index === 3
-                        ? "bg-rose-500/14 text-rose-700 dark:text-rose-300"
-                        : "border border-border/70 bg-background/60 text-muted-foreground"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-5 rounded-[1.5rem] border border-border/70 bg-background/45 p-4">
-              <div className="mb-4 flex flex-wrap gap-4 text-sm">
-                {overview.candidates.map((candidate, index) => (
-                  <div key={candidate.cid} className="flex items-center gap-2">
-                    <span
-                      className={`size-2.5 rounded-full ${
-                        index === 0
-                          ? "bg-violet-500"
-                          : index === 1
-                            ? "bg-orange-500"
-                            : "bg-sky-500"
-                      }`}
-                    />
-                    <span>{candidate.name}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="h-72">
-                <ResultsChart data={chartData} />
-              </div>
-            </div>
-          </section>
+          <AnalyticsSection overview={overview} />
 
           <details className="group rounded-[1.85rem] border border-rose-500/20 bg-rose-500/10 p-5 sm:p-6 open:[&_.rules-chevron]:rotate-180">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
@@ -418,12 +705,16 @@ export function PollDetailClient({ pollIdStr }: Props) {
                 user may cast one vote per poll, and once submitted, votes
                 cannot be changed or withdrawn.
               </p>
-              <p><br />
+              <p>
+                <br />
                 The poll resolves based on aggregated valid responses submitted
                 before the designated closing time. Votes submitted after the
                 poll closes will not be counted.
               </p>
-              <p><br />Responses are considered valid only if:</p>
+              <p>
+                <br />
+                Responses are considered valid only if:
+              </p>
               <ul className="list-disc pl-10 text-foreground/90">
                 <li>The user selects one of the predefined options.</li>
                 <li>The poll is active at the time of submission.</li>
@@ -432,16 +723,19 @@ export function PollDetailClient({ pollIdStr }: Props) {
                   against duplicate or automated voting.
                 </li>
               </ul>
-              <p><br />
+              <p>
+                <br />
                 Participation is limited to verified users to preserve the
                 integrity, fairness, and reliability of the poll results.
               </p>
-              <p><br />
+              <p>
+                <br />
                 Poll results reflect public sentiment at the time of voting and
                 are not legally binding. VoteX records results in a verifiable
                 and auditable manner while keeping individual votes private.
               </p>
-              <p><br />
+              <p>
+                <br />
                 The poll may resolve early if a clearly defined majority
                 threshold is reached before the scheduled closing time.
                 Otherwise, it resolves at the stated end time.
@@ -475,12 +769,21 @@ export function PollDetailClient({ pollIdStr }: Props) {
 
         <aside className="space-y-6">
           <section className="glass-panel rounded-[1.85rem] p-5 sm:p-6">
-            <h3 className="text-center font-heading text-3xl font-semibold tracking-[-0.05em]">
-              Vote overview
-            </h3>
-            <p className="mt-3 text-center text-sm leading-7 text-muted-foreground">
-              Results are computed from the current on-chain state and presented
-              without additional client RPC bootstrapping.
+            <p className="mt-3 text-center text-lg leading-8 text-muted-foreground">
+              <strong>
+                {overview.kind === "rating"
+                  ? "Thanks for submitting your rating!"
+                  : "Thank you for your vote!"}
+              </strong>
+              {overview.kind === "normal" ? (
+                <>
+                  <br />
+                  You have voted for{" "}
+                  <strong className="text-violet-600 dark:text-violet-400">
+                    {votedOptionLabel ?? "the option chosen"}
+                  </strong>
+                </>
+              ) : null}
             </p>
 
             <div className="mt-6 space-y-3">
@@ -500,16 +803,25 @@ export function PollDetailClient({ pollIdStr }: Props) {
                       {candidate.name}
                     </span>
                     <span className="text-lg font-semibold text-foreground">
-                      {formatPercent(candidate.percent)}
+                      {overview.kind === "rating"
+                        ? candidate.avgScore !== null
+                          ? `${candidate.avgScore.toFixed(1)}/5`
+                          : "0.0/5"
+                        : formatPercent(candidate.percent)}
                     </span>
                   </div>
+                  {overview.kind === "rating" ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {candidate.votes} rating{candidate.votes === 1 ? "" : "s"}
+                    </p>
+                  ) : null}
                 </div>
               ))}
             </div>
 
-            <div className="mt-5 rounded-[1.25rem] border border-border/70 bg-background/55 px-4 py-4 text-center text-sm text-muted-foreground">
-              <Lock className="mx-auto mb-2 size-4 text-primary" />
-              Live poll detail loaded through a single cached overview request.
+            <div className="mt-5 flex items-center justify-center gap-2 rounded-[1.25rem] border border-border/70 bg-background/55 px-4 py-4 text-center text-sm text-muted-foreground">
+              <Lock className="size-4 text-primary" />
+              <span>Vote submitted</span>
             </div>
 
             <div className="mt-5 grid gap-3">

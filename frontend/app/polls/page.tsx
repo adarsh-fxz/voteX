@@ -5,7 +5,7 @@ import { PollsListClient } from "@/components/PollsListClient";
 export default function PollsPage() {
   return (
     <div className="premium-section pb-12 pt-4 sm:pt-6">
-      <div className="hero-sheen relative overflow-hidden rounded-[2rem] border border-border/70 px-5 py-10 shadow-[var(--shadow-soft)] sm:px-8">
+      <div className="hero-sheen relative overflow-hidden rounded-[2rem] border border-border/70 px-5 py-10 shadow-(--shadow-soft) sm:px-8">
         <div className="relative z-10 flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-2xl">
             <Badge
