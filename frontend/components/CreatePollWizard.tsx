@@ -2,7 +2,19 @@
 
 import { useWallet } from "@solana/wallet-adapter-react";
 import BN from "bn.js";
-import { ArrowLeft, ArrowRight } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Calendar,
+  Check,
+  ChevronRight,
+  Loader2,
+  Plus,
+  Trash2,
+  Users,
+  Vote,
+  Wallet,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -19,9 +31,44 @@ import {
 
 type Step = 1 | 2 | 3 | 4;
 
-const steps = ["Details", "Access", "Schedule", "Candidates"] as const;
-const fieldClass = "input-premium mt-2";
-const surfaceClass = "glass-panel rounded-[1.85rem] p-5 sm:p-6";
+const steps = [
+  { label: "Details", icon: Vote },
+  { label: "Access", icon: Users },
+  { label: "Schedule", icon: Calendar },
+  { label: "Candidates", icon: ChevronRight },
+] as const;
+
+const minuteMs = 60 * 1000;
+
+function toDateTimeLocalValue(date: Date) {
+  const pad = (v: number) => String(v).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function FieldError({ msg }: { msg?: string }) {
+  if (!msg) return null;
+  return (
+    <p className="mt-1.5 flex items-center gap-1.5 text-xs text-destructive">
+      <span className="inline-block size-1 rounded-full bg-destructive" />
+      {msg}
+    </p>
+  );
+}
+
+function Label({
+  children,
+  required,
+}: {
+  children: React.ReactNode;
+  required?: boolean;
+}) {
+  return (
+    <span className="mb-1.5 block text-sm font-medium text-foreground/90">
+      {children}
+      {required && <span className="ml-0.5 text-destructive">*</span>}
+    </span>
+  );
+}
 
 export function CreatePollWizard() {
   const router = useRouter();
@@ -40,10 +87,79 @@ export function CreatePollWizard() {
   const [voteStart, setVoteStart] = useState("");
   const [voteEnd, setVoteEnd] = useState("");
 
-  const [candidatesText, setCandidatesText] = useState("Option A\nOption B");
+  const [candidates, setCandidates] = useState(["Option A", "Option B"]);
+  const [fieldErr, setFieldErr] = useState<Record<string, string>>({});
 
   const toUnix = (local: string) =>
     Math.floor(new Date(local).getTime() / 1000);
+  const nowUnix = () => Math.floor(Date.now() / 1000);
+  const minDateTime = toDateTimeLocalValue(new Date());
+  const minVoteEndDateTime = voteStart || minDateTime;
+
+  function addCandidate() {
+    setCandidates((prev) => [...prev, ""]);
+  }
+
+  function updateCandidate(index: number, value: string) {
+    setCandidates((prev) => prev.map((c, i) => (i === index ? value : c)));
+  }
+
+  function removeCandidate(index: number) {
+    setCandidates((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  const parsedCandidates = candidates.map((s) => s.trim()).filter(Boolean);
+
+  function validateStep(targetStep: Step) {
+    const nextErrors: Record<string, string> = {};
+    const now = nowUnix();
+
+    if (targetStep >= 1) {
+      if (!title.trim()) nextErrors.title = "Title is required.";
+      if (title.trim().length > 120)
+        nextErrors.title = "Title must be 120 characters or less.";
+    }
+
+    if (targetStep >= 3) {
+      if (access === "merkle" && !regEnd)
+        nextErrors.regEnd = "Registration end is required for restricted polls.";
+      if (!voteStart) nextErrors.voteStart = "Voting start is required.";
+      if (!voteEnd) nextErrors.voteEnd = "Voting end is required.";
+
+      if (regEnd && toUnix(regEnd) < now)
+        nextErrors.regEnd = "Registration end cannot be in the past.";
+      if (voteStart && toUnix(voteStart) < now)
+        nextErrors.voteStart = "Voting start cannot be in the past.";
+      if (voteEnd && toUnix(voteEnd) < now)
+        nextErrors.voteEnd = "Voting end cannot be in the past.";
+      if (voteStart && voteEnd && toUnix(voteStart) >= toUnix(voteEnd))
+        nextErrors.voteEnd = "Voting end must be after voting start.";
+      if (
+        access === "merkle" &&
+        regEnd &&
+        voteStart &&
+        toUnix(regEnd) >= toUnix(voteStart)
+      )
+        nextErrors.regEnd = "Registration end must be before voting start.";
+    }
+
+    if (targetStep >= 4) {
+      if (parsedCandidates.length < 2)
+        nextErrors.candidates = "Add at least two candidates.";
+      const tooLong = parsedCandidates.find((n) => n.length > 32);
+      if (tooLong)
+        nextErrors.candidates = `Name too long (max 32 chars): "${tooLong}"`;
+    }
+
+    setFieldErr(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  }
+
+  function goToStep(nextStep: Step) {
+    setErr(null);
+    if (nextStep > step && !validateStep(step)) return;
+    setStep(nextStep);
+  }
 
   async function ensureInit() {
     if (!program || !publicKey) throw new Error("Wallet / program");
@@ -66,43 +182,33 @@ export function CreatePollWizard() {
       }),
     });
     const j = (await res.json()) as { cid?: string; error?: string };
-    if (!res.ok) {
-      throw new Error(j.error ?? "metadata upload failed");
-    }
+    if (!res.ok) throw new Error(j.error ?? "metadata upload failed");
     const cid = j.cid;
     if (!cid) throw new Error("No CID returned from Pinata");
-    if (cid.length > ONCHAIN_IPFS_REF_MAX_LEN) {
+    if (cid.length > ONCHAIN_IPFS_REF_MAX_LEN)
       throw new Error(
-        `Pinned metadata CID is ${cid.length} chars; on-chain limit is ${ONCHAIN_IPFS_REF_MAX_LEN} (store raw CID, not ipfs://…).`,
+        `CID is ${cid.length} chars; on-chain limit is ${ONCHAIN_IPFS_REF_MAX_LEN}.`,
       );
-    }
     return cid;
   }
 
   async function onSubmit() {
     setErr(null);
+    if (!validateStep(4)) return;
     setLoading(true);
     try {
-      if (!program || !publicKey) {
-        throw new Error("Connect wallet");
-      }
-      if (!title.trim()) throw new Error("Title is required");
-      if (!regEnd || !voteStart || !voteEnd) {
-        throw new Error("All date fields are required");
-      }
-      if (toUnix(regEnd) >= toUnix(voteStart)) {
-        throw new Error("Registration end must be before voting start");
-      }
-      if (toUnix(voteStart) >= toUnix(voteEnd)) {
-        throw new Error("Voting start must be before voting end");
-      }
+      if (!program || !publicKey) throw new Error("Connect wallet");
       await ensureInit();
       const metadataUri = await uploadMetadata();
       const pid = votexProgramId();
       const counter = await program.account.counter.fetch(counterPda(pid));
       const nextPid = counter.count.add(new BN(1));
 
-      const registrationEnd = new BN(toUnix(regEnd));
+      const registrationUnix =
+        access === "open"
+          ? Math.max(nowUnix(), toUnix(voteStart) - Math.floor(minuteMs / 1000))
+          : toUnix(regEnd);
+      const registrationEnd = new BN(registrationUnix);
       const votingStart = new BN(toUnix(voteStart));
       const votingEnd = new BN(toUnix(voteEnd));
 
@@ -126,16 +232,12 @@ export function CreatePollWizard() {
         })
         .rpc();
 
-      const names = candidatesText
-        .split("\n")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      if (names.length === 0) throw new Error("Add at least one candidate");
+      const names = parsedCandidates;
+      if (names.length < 2) throw new Error("Add at least two candidates");
 
       const pollIdBn = nextPid;
       for (const name of names) {
-        if (name.length > 32)
-          throw new Error(`Name too long (max 32): ${name}`);
+        if (name.length > 32) throw new Error(`Name too long (max 32): ${name}`);
         const regs = await program.account.registrations.fetch(
           registrationsPda(pid),
         );
@@ -162,237 +264,414 @@ export function CreatePollWizard() {
 
   if (!publicKey) {
     return (
-      <div className="glass-panel rounded-[1.75rem] px-5 py-8 text-muted-foreground">
-        Connect a wallet to create a poll.
+      <div className="glass-panel flex items-center gap-4 rounded-[1.75rem] px-6 py-8">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+          <Wallet className="size-5" />
+        </div>
+        <div>
+          <p className="font-medium">Wallet not connected</p>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Connect a wallet to create a poll.
+          </p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
-      <div className="grid gap-3 sm:grid-cols-4">
-        {[1, 2, 3, 4].map((s) => (
-          <div
-            key={s}
-            className={`rounded-[1.4rem] border px-4 py-3 text-sm transition ${
-              step === s
-                ? "border-primary/30 bg-primary/10 text-foreground shadow-(--shadow-soft)"
-                : "border-border/70 bg-background/50 text-muted-foreground"
-            }`}
-          >
-            <p className="text-[0.68rem] font-medium uppercase tracking-[0.24em]">
-              Step {s}
-            </p>
-            <p className="mt-2 font-medium">{steps[s - 1]}</p>
-          </div>
-        ))}
+    <div className="mx-auto max-w-2xl space-y-5">
+      {/* Step indicator */}
+      <div className="glass-panel rounded-[1.75rem] px-5 py-4">
+        <div className="flex items-center justify-between">
+          {steps.map(({ label, icon: Icon }, idx) => {
+            const s = (idx + 1) as Step;
+            const done = step > s;
+            const active = step === s;
+            return (
+              <div key={s} className="flex flex-1 items-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (s < step) goToStep(s);
+                  }}
+                  disabled={s >= step}
+                  className={`group flex flex-col items-center gap-1.5 disabled:cursor-default ${s < step ? "cursor-pointer" : ""}`}
+                >
+                  <div
+                    className={`flex size-9 items-center justify-center rounded-2xl border text-xs font-semibold transition-all duration-200 ${
+                      done
+                        ? "border-primary/40 bg-primary/10 text-primary"
+                        : active
+                          ? "border-primary bg-primary text-primary-foreground shadow-[0_6px_20px_-8px_var(--primary)]"
+                          : "border-border/70 bg-background/60 text-muted-foreground"
+                    }`}
+                  >
+                    {done ? <Check className="size-3.5" /> : <Icon className="size-3.5" />}
+                  </div>
+                  <span
+                    className={`hidden text-[0.65rem] font-medium tracking-wide sm:block ${
+                      active
+                        ? "text-foreground"
+                        : done
+                          ? "text-primary/80"
+                          : "text-muted-foreground"
+                    }`}
+                  >
+                    {label}
+                  </span>
+                </button>
+                {idx < steps.length - 1 && (
+                  <div className="mx-1 h-px flex-1 sm:mx-2">
+                    <div
+                      className={`h-full transition-all duration-300 ${
+                        step > s
+                          ? "bg-primary/40"
+                          : "bg-border/60"
+                      }`}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
+      {/* Step 1: Details */}
       {step === 1 && (
-        <div className={surfaceClass}>
-          <div className="mb-6 flex items-start justify-between gap-4">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-[0.24em] text-primary">
-                Poll details
-              </p>
-              <h2 className="mt-2 font-heading text-2xl font-semibold tracking-[-0.04em]">
-                Frame the vote clearly from the start.
-              </h2>
-            </div>
+        <div className="glass-panel rounded-[1.85rem] p-6 sm:p-8">
+          <div className="mb-7">
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primary">
+              Step 1 of 4
+            </p>
+            <h2 className="mt-2 font-heading text-[1.6rem] font-semibold leading-tight tracking-[-0.04em]">
+              Frame your poll
+            </h2>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              Give voters enough context to make an informed choice.
+            </p>
           </div>
-          <div className="space-y-4">
-            <label className="block">
-              <span className="text-sm font-medium">Title</span>
+
+          <div className="space-y-5">
+            <div>
+              <Label required>Title</Label>
               <input
-                className={fieldClass}
+                className="input-premium"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
+                placeholder="e.g. Which feature should we ship next?"
+                maxLength={120}
               />
-            </label>
-            <label className="block">
-              <span className="text-sm font-medium">Description</span>
+              <div className="mt-1.5 flex items-start justify-between gap-2">
+                <FieldError msg={fieldErr.title} />
+                <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                  {title.length}/120
+                </span>
+              </div>
+            </div>
+
+            <div>
+              <Label>Description</Label>
               <textarea
-                className={fieldClass}
+                className="input-premium resize-none"
                 rows={4}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
+                placeholder="Provide any background voters should know before casting a vote."
               />
-            </label>
-            <Button
-              type="button"
-              className="button-primary-premium gap-2"
-              onClick={() => setStep(2)}
-            >
-              Next
-              <ArrowRight className="size-4" />
-            </Button>
+            </div>
+
+            <div className="flex justify-end pt-1">
+              <Button
+                type="button"
+                className="button-primary-premium gap-2"
+                onClick={() => goToStep(2)}
+              >
+                Continue
+                <ArrowRight className="size-4" />
+              </Button>
+            </div>
           </div>
         </div>
       )}
 
+      {/* Step 2: Access */}
       {step === 2 && (
-        <div className={surfaceClass}>
-          <div className="mb-6">
-            <p className="text-xs font-medium uppercase tracking-[0.24em] text-primary">
-              Voting access
+        <div className="glass-panel rounded-[1.85rem] p-6 sm:p-8">
+          <div className="mb-7">
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primary">
+              Step 2 of 4
             </p>
-            <h2 className="mt-2 font-heading text-2xl font-semibold tracking-[-0.04em]">
-              Choose how people participate.
+            <h2 className="mt-2 font-heading text-[1.6rem] font-semibold leading-tight tracking-[-0.04em]">
+              Voting type & access
             </h2>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              Choose how voters interact and who is eligible.
+            </p>
           </div>
-          <div className="space-y-4">
-            <label className="flex items-center gap-2">
-              <input
-                type="radio"
-                checked={kind === "normal"}
-                onChange={() => setKind("normal")}
-              />
-              Normal (single choice)
-            </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="radio"
-                checked={kind === "rating"}
-                onChange={() => setKind("rating")}
-              />
-              Rating (1–5 per candidate)
-            </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="radio"
-                checked={access === "open"}
-                onChange={() => setAccess("open")}
-              />
-              Open voting
-            </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="radio"
-                checked={access === "merkle"}
-                onChange={() => setAccess("merkle")}
-              />
-              Merkle-restricted (invite + commit)
-            </label>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                className="button-secondary-premium gap-2"
-                onClick={() => setStep(1)}
-              >
-                <ArrowLeft className="size-4" />
-                Back
-              </Button>
-              <Button
-                type="button"
-                className="button-primary-premium gap-2"
-                onClick={() => setStep(3)}
-              >
-                Next
-                <ArrowRight className="size-4" />
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
 
-      {step === 3 && (
-        <div className={surfaceClass}>
-          <div className="mb-6">
-            <p className="text-xs font-medium uppercase tracking-[0.24em] text-primary">
-              Scheduling
-            </p>
-            <h2 className="mt-2 font-heading text-2xl font-semibold tracking-[-0.04em]">
-              Define the registration and voting window.
-            </h2>
-          </div>
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Local time → stored as Unix seconds.
-            </p>
-            <label className="block">
-              <span className="text-sm font-medium">Registration ends</span>
-              <input
-                type="datetime-local"
-                className={fieldClass}
-                value={regEnd}
-                onChange={(e) => setRegEnd(e.target.value)}
-              />
-            </label>
-            <label className="block">
-              <span className="text-sm font-medium">Voting starts</span>
-              <input
-                type="datetime-local"
-                className={fieldClass}
-                value={voteStart}
-                onChange={(e) => setVoteStart(e.target.value)}
-              />
-            </label>
-            <label className="block">
-              <span className="text-sm font-medium">Voting ends</span>
-              <input
-                type="datetime-local"
-                className={fieldClass}
-                value={voteEnd}
-                onChange={(e) => setVoteEnd(e.target.value)}
-              />
-            </label>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                className="button-secondary-premium gap-2"
-                onClick={() => setStep(2)}
-              >
-                <ArrowLeft className="size-4" />
-                Back
-              </Button>
-              <Button
-                type="button"
-                className="button-primary-premium gap-2"
-                onClick={() => setStep(4)}
-              >
-                Next
-                <ArrowRight className="size-4" />
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {step === 4 && (
-        <div className={surfaceClass}>
-          <div className="mb-6">
-            <p className="text-xs font-medium uppercase tracking-[0.24em] text-primary">
-              Candidates
-            </p>
-            <h2 className="mt-2 font-heading text-2xl font-semibold tracking-[-0.04em]">
-              Add each candidate as a clean ballot option.
-            </h2>
-          </div>
-          <div className="space-y-4">
-            <label className="block">
-              <span className="text-sm font-medium">
-                Candidates (one per line)
-              </span>
-              <textarea
-                className={`${fieldClass} font-mono text-sm`}
-                rows={6}
-                value={candidatesText}
-                onChange={(e) => setCandidatesText(e.target.value)}
-              />
-            </label>
-            {err && (
-              <p className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                {err}
+          <div className="space-y-6">
+            {/* Poll kind */}
+            <div>
+              <p className="mb-3 text-sm font-medium text-foreground/90">
+                Poll type
               </p>
-            )}
-            <div className="flex flex-wrap gap-2">
+              <div className="grid gap-3 sm:grid-cols-2">
+                {(
+                  [
+                    {
+                      value: "normal",
+                      title: "Single choice",
+                      desc: "Each voter picks one option.",
+                    },
+                    {
+                      value: "rating",
+                      title: "Rating",
+                      desc: "Rate each candidate 1–5.",
+                    },
+                  ] as const
+                ).map(({ value, title: t, desc }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setKind(value)}
+                    className={`group relative w-full rounded-2xl border px-4 py-4 text-left transition-all duration-150 ${
+                      kind === value
+                        ? "border-primary/40 bg-primary/8 shadow-[0_0_0_1px_var(--primary)/20]"
+                        : "border-border/70 bg-background/50 hover:border-border hover:bg-background/70"
+                    }`}
+                  >
+                    {kind === value && (
+                      <span className="absolute right-3 top-3 flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                        <Check className="size-3" />
+                      </span>
+                    )}
+                    <p className="text-sm font-semibold">{t}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{desc}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Access kind */}
+            <div>
+              <p className="mb-3 text-sm font-medium text-foreground/90">
+                Voter eligibility
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {(
+                  [
+                    {
+                      value: "open",
+                      title: "Open",
+                      desc: "Anyone with a wallet can vote.",
+                    },
+                    {
+                      value: "merkle",
+                      title: "Invite-only",
+                      desc: "Merkle-restricted to a specific list.",
+                    },
+                  ] as const
+                ).map(({ value, title: t, desc }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setAccess(value)}
+                    className={`group relative w-full rounded-2xl border px-4 py-4 text-left transition-all duration-150 ${
+                      access === value
+                        ? "border-primary/40 bg-primary/8 shadow-[0_0_0_1px_var(--primary)/20]"
+                        : "border-border/70 bg-background/50 hover:border-border hover:bg-background/70"
+                    }`}
+                  >
+                    {access === value && (
+                      <span className="absolute right-3 top-3 flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                        <Check className="size-3" />
+                      </span>
+                    )}
+                    <p className="text-sm font-semibold">{t}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{desc}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-1">
               <Button
                 type="button"
-                variant="outline"
-                className="button-secondary-premium gap-2"
-                onClick={() => setStep(3)}
+                variant="ghost"
+                className="gap-2 text-muted-foreground hover:text-foreground"
+                onClick={() => goToStep(1)}
+              >
+                <ArrowLeft className="size-4" />
+                Back
+              </Button>
+              <Button
+                type="button"
+                className="button-primary-premium gap-2"
+                onClick={() => goToStep(3)}
+              >
+                Continue
+                <ArrowRight className="size-4" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Step 3: Schedule */}
+      {step === 3 && (
+        <div className="glass-panel rounded-[1.85rem] p-6 sm:p-8">
+          <div className="mb-7">
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primary">
+              Step 3 of 4
+            </p>
+            <h2 className="mt-2 font-heading text-[1.6rem] font-semibold leading-tight tracking-[-0.04em]">
+              Set the schedule
+            </h2>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              All times are local - stored as Unix seconds on-chain.
+            </p>
+          </div>
+
+          <div className="space-y-5">
+            {access === "merkle" ? (
+              <div>
+                <Label required>Registration ends</Label>
+                <input
+                  type="datetime-local"
+                  className="input-premium"
+                  value={regEnd}
+                  min={minDateTime}
+                  onChange={(e) => setRegEnd(e.target.value)}
+                />
+                <FieldError msg={fieldErr.regEnd} />
+              </div>
+            ) : (
+              <div className="flex items-start gap-3 rounded-2xl border border-border/60 bg-muted/40 px-4 py-3">
+                <div className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                  <Check className="size-3" />
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Open voting - no registration deadline required.
+                </p>
+              </div>
+            )}
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <Label required>Voting starts</Label>
+                <input
+                  type="datetime-local"
+                  className="input-premium"
+                  value={voteStart}
+                  min={minDateTime}
+                  onChange={(e) => setVoteStart(e.target.value)}
+                />
+                <FieldError msg={fieldErr.voteStart} />
+              </div>
+              <div>
+                <Label required>Voting ends</Label>
+                <input
+                  type="datetime-local"
+                  className="input-premium"
+                  value={voteEnd}
+                  min={minVoteEndDateTime}
+                  onChange={(e) => setVoteEnd(e.target.value)}
+                />
+                <FieldError msg={fieldErr.voteEnd} />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-1">
+              <Button
+                type="button"
+                variant="ghost"
+                className="gap-2 text-muted-foreground hover:text-foreground"
+                onClick={() => goToStep(2)}
+              >
+                <ArrowLeft className="size-4" />
+                Back
+              </Button>
+              <Button
+                type="button"
+                className="button-primary-premium gap-2"
+                onClick={() => goToStep(4)}
+              >
+                Continue
+                <ArrowRight className="size-4" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Step 4: Candidates */}
+      {step === 4 && (
+        <div className="glass-panel rounded-[1.85rem] p-6 sm:p-8">
+          <div className="mb-7">
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primary">
+              Step 4 of 4
+            </p>
+            <h2 className="mt-2 font-heading text-[1.6rem] font-semibold leading-tight tracking-[-0.04em]">
+              Add candidates
+            </h2>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              Minimum 2 · max 32 characters each.
+            </p>
+          </div>
+
+          <div className="space-y-5">
+            <div className="space-y-2">
+              {candidates.map((c, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <span className="flex size-7 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-background/60 text-xs font-semibold text-muted-foreground">
+                    {i + 1}
+                  </span>
+                  <input
+                    className="input-premium flex-1"
+                    value={c}
+                    onChange={(e) => updateCandidate(i, e.target.value)}
+                    placeholder={`Candidate ${i + 1}`}
+                    maxLength={32}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeCandidate(i)}
+                    disabled={candidates.length <= 2}
+                    className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-background/60 text-muted-foreground transition hover:border-destructive/40 hover:bg-destructive/8 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-30"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={addCandidate}
+              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 py-3 text-sm font-medium text-muted-foreground transition hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+            >
+              <Plus className="size-4" />
+              Add candidate
+            </button>
+
+            <FieldError msg={fieldErr.candidates} />
+
+            {err && (
+              <div className="flex items-start gap-3 rounded-2xl border border-destructive/30 bg-destructive/8 px-4 py-3">
+                <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-destructive/20 text-destructive">
+                  <span className="text-[9px] font-bold">!</span>
+                </span>
+                <p className="text-sm text-destructive">{err}</p>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between pt-1">
+              <Button
+                type="button"
+                variant="ghost"
+                className="gap-2 text-muted-foreground hover:text-foreground"
+                onClick={() => goToStep(3)}
               >
                 <ArrowLeft className="size-4" />
                 Back
@@ -403,8 +682,17 @@ export function CreatePollWizard() {
                 className="button-primary-premium gap-2 disabled:opacity-50"
                 onClick={onSubmit}
               >
-                {loading ? "Submitting…" : "Create on-chain"}
-                {!loading && <ArrowRight className="size-4" />}
+                {loading ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Creating…
+                  </>
+                ) : (
+                  <>
+                    Create poll
+                    <ArrowRight className="size-4" />
+                  </>
+                )}
               </Button>
             </div>
           </div>

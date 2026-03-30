@@ -17,9 +17,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: `${APP_NAME} — premium verifiable voting on Solana`,
+  title: `${APP_NAME} - peer-to-peer voting on Solana`,
   description:
-    "Launch premium, verifiable voting experiences on Solana with wallet-native access control, Merkle eligibility, and IPFS-backed audit artifacts.",
+    "Launch peer-to-peer voting experiences on Solana with wallet-native access control, Merkle eligibility, and IPFS-backed audit artifacts.",
 };
 
 export default function RootLayout({
