@@ -52,7 +52,23 @@ const CANDIDATE_COLORS = [
   "#eab308",
 ];
 
-type TimeSeriesPoint = { date: string; [candidate: string]: number | string };
+type TimeSeriesPoint = { date: string; [key: string]: number | string };
+
+type ChartSeries = { key: string; name: string };
+
+function candidateChartSeries(
+  candidates: Array<{ cid: string; name: string }>,
+): ChartSeries[] {
+  const byName = new Map<string, number>();
+  for (const c of candidates) {
+    byName.set(c.name, (byName.get(c.name) ?? 0) + 1);
+  }
+  return candidates.map((c) => ({
+    key: `c_${c.cid}`,
+    name:
+      (byName.get(c.name) ?? 0) > 1 ? `${c.name} (${c.cid})` : c.name,
+  }));
+}
 
 const LineResultsChart = dynamic(
   () =>
@@ -70,10 +86,10 @@ const LineResultsChart = dynamic(
 
       function Chart({
         data,
-        candidates,
+        series,
       }: {
         data: TimeSeriesPoint[];
-        candidates: string[];
+        series: ChartSeries[];
       }) {
         return (
           <ResponsiveContainer width="100%" height="100%">
@@ -87,9 +103,10 @@ const LineResultsChart = dynamic(
               />
               <XAxis
                 dataKey="date"
+                interval={0}
                 tickLine={false}
                 axisLine={false}
-                fontSize={12}
+                fontSize={11}
                 tick={{ fill: "currentColor", opacity: 0.55 }}
               />
               <YAxis
@@ -122,11 +139,12 @@ const LineResultsChart = dynamic(
                 iconSize={9}
                 wrapperStyle={{ fontSize: 13, paddingBottom: 8 }}
               />
-              {candidates.map((name, i) => (
+              {series.map((s, i) => (
                 <Line
-                  key={name}
+                  key={s.key}
                   type="monotone"
-                  dataKey={name}
+                  dataKey={s.key}
+                  name={s.name}
                   stroke={CANDIDATE_COLORS[i % CANDIDATE_COLORS.length]}
                   strokeWidth={2.5}
                   dot={false}
@@ -285,38 +303,47 @@ function generatedCoverClass(id: string) {
 }
 
 function buildTimeSeries(
-  candidates: Array<{ name: string; percent: number; avgScore: number | null }>,
+  candidates: Array<{
+    cid: string;
+    name: string;
+    percent: number;
+    avgScore: number | null;
+  }>,
   votingStart: number,
   votingEnd: number,
   kind: "normal" | "rating",
-): { data: TimeSeriesPoint[]; names: string[] } {
+): { data: TimeSeriesPoint[]; series: ChartSeries[] } {
   const now = Math.min(Date.now() / 1000, votingEnd);
   const start = votingStart;
   const elapsed = Math.max(now - start, 0);
   const totalSpan = Math.max(votingEnd - start, 1);
+  const showClock = totalSpan <= 7 * 86400;
+  const dateFmt = new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(showClock ? { hour: "numeric", minute: "2-digit" } : {}),
+  });
 
+  const series = candidateChartSeries(candidates);
   const numPoints = 8;
   const points: TimeSeriesPoint[] = [];
 
   for (let i = 0; i <= numPoints; i++) {
     const frac = (i / numPoints) * Math.min(elapsed / totalSpan, 1);
     const ts = start + frac * totalSpan;
-    const dateLabel = new Intl.DateTimeFormat(undefined, {
-      month: "short",
-      day: "numeric",
-    }).format(new Date(ts * 1000));
+    const dateLabel = dateFmt.format(new Date(ts * 1000));
 
     const point: TimeSeriesPoint = { date: dateLabel };
-    candidates.forEach((c) => {
+    candidates.forEach((c, idx) => {
       const targetValue =
         kind === "rating" ? ((c.avgScore ?? 0) / 5) * 100 : c.percent;
       const eased = frac === 0 ? 0 : targetValue * (1 - Math.exp(-6 * frac));
-      point[c.name] = Math.round(eased * 10) / 10;
+      point[series[idx].key] = Math.round(eased * 10) / 10;
     });
     points.push(point);
   }
 
-  return { data: points, names: candidates.map((c) => c.name) };
+  return { data: points, series };
 }
 
 type ChartView = "line" | "donut";
@@ -327,7 +354,7 @@ function AnalyticsSection({ overview }: { overview: PollOverview }) {
   const [chartView, setChartView] = useState<ChartView>("line");
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("All");
 
-  const { data: timeSeriesData, names: candidateNames } = useMemo(() => {
+  const { data: timeSeriesData, series: lineChartSeries } = useMemo(() => {
     return buildTimeSeries(
       overview.candidates,
       overview.votingStart,
@@ -343,11 +370,11 @@ function AnalyticsSection({ overview }: { overview: PollOverview }) {
 
   const donutData = useMemo(
     () =>
-      overview.candidates.map((c) => ({
-        name: c.name,
+      overview.candidates.map((c, i) => ({
+        name: lineChartSeries[i]?.name ?? c.name,
         percent: Math.round(c.percent),
       })),
-    [overview.candidates],
+    [overview.candidates, lineChartSeries],
   );
 
   return (
@@ -415,7 +442,7 @@ function AnalyticsSection({ overview }: { overview: PollOverview }) {
             <div className="h-72">
               <LineResultsChart
                 data={timeSeriesData}
-                candidates={candidateNames}
+                series={lineChartSeries}
               />
             </div>
           </div>
@@ -462,7 +489,9 @@ function AnalyticsSection({ overview }: { overview: PollOverview }) {
                           CANDIDATE_COLORS[i % CANDIDATE_COLORS.length],
                       }}
                     />
-                    <span className="text-sm font-medium">{c.name}</span>
+                    <span className="text-sm font-medium">
+                      {lineChartSeries[i]?.name ?? c.name}
+                    </span>
                   </div>
                   <span className="text-sm font-semibold">
                     {overview.kind === "rating"

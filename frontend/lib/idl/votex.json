@@ -1232,7 +1232,12 @@
         "fields": [
           {
             "name": "rated_mask",
-            "type": "u32"
+            "type": {
+              "array": [
+                "u64",
+                4
+              ]
+            }
           }
         ]
       }

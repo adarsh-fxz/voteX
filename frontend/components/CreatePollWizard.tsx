@@ -238,10 +238,8 @@ export function CreatePollWizard() {
       const pollIdBn = nextPid;
       for (const name of names) {
         if (name.length > 32) throw new Error(`Name too long (max 32): ${name}`);
-        const regs = await program.account.registrations.fetch(
-          registrationsPda(pid),
-        );
-        const cid = regs.count.add(new BN(1));
+        const pollAcc = await program.account.poll.fetch(pollPda(pid, pollIdBn));
+        const cid = pollAcc.candidates.add(new BN(1));
         await program.methods
           .registerCandidate(pollIdBn, name)
           .accountsPartial({

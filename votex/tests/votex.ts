@@ -176,8 +176,7 @@ describe("voteX", () => {
   // Phase 1: register_candidate (pre-inits RatingResult)
 
   it("Registers a candidate (RatingResult PDA pre-initialized)", async () => {
-    const regs = await program.account.registrations.fetch(registrationsPda);
-    CID = regs.count.add(new anchor.BN(1));
+    CID = new anchor.BN(1);
     await program.methods
       .registerCandidate(PID, `Candidate #${CID}`)
       .accountsPartial({
@@ -245,9 +244,8 @@ describe("voteX", () => {
   });
 
   it("Registers two candidates on the rating poll", async () => {
-    const regs = await program.account.registrations.fetch(registrationsPda);
-    RATING_CID = regs.count.add(new anchor.BN(1));
-    const CID2 = regs.count.add(new anchor.BN(2));
+    RATING_CID = new anchor.BN(1);
+    const CID2 = new anchor.BN(2);
 
     await program.methods
       .registerCandidate(RATING_PID, `Rating Candidate 1`)
@@ -333,12 +331,12 @@ describe("voteX", () => {
     const rater = await program.account.rater.fetch(
       raterPda(RATING_PID, user.publicKey),
     );
-    const expectedBit = 1 << (RATING_CID.toNumber() - 1);
+    const expectedMask0 = new anchor.BN(1).shln(RATING_CID.toNumber() - 1);
     console.log(
       "rated_mask after candidate 1:",
-      rater.ratedMask,
-      "| expected bit:",
-      expectedBit,
+      rater.ratedMask.map((w: anchor.BN) => w.toString()),
+      "| word0 expect:",
+      expectedMask0.toString(),
     );
     const rr = await program.account.ratingResult.fetch(
       ratingResultPda(RATING_PID, RATING_CID),
@@ -361,7 +359,10 @@ describe("voteX", () => {
     const rater = await program.account.rater.fetch(
       raterPda(RATING_PID, user.publicKey),
     );
-    console.log("rated_mask after 2 candidates:", rater.ratedMask);
+    console.log(
+      "rated_mask after 2 candidates:",
+      rater.ratedMask.map((w: anchor.BN) => w.toString()),
+    );
   });
 
   it("Rejects re-rating candidate 1 (JudgeAlreadyRated via bitmask)", async () => {
@@ -514,8 +515,7 @@ describe("voteX", () => {
       .rpc();
 
     // Register a candidate
-    const regs = await program.account.registrations.fetch(registrationsPda);
-    const shortCid = regs.count.add(new anchor.BN(1));
+    const shortCid = new anchor.BN(1);
     await program.methods
       .registerCandidate(shortPid, "Short candidate")
       .accountsPartial({

@@ -27,20 +27,26 @@ pub fn register_candidate(
     }
 
     let registrations = &mut ctx.accounts.registrations;
+    let next_cid = poll
+        .candidates
+        .checked_add(1)
+        .ok_or(ArithmeticOverflow)?;
+    if next_cid > 256 {
+        return Err(InvalidCandidateId.into());
+    }
     registrations.count = registrations
         .count
         .checked_add(1)
         .ok_or(ArithmeticOverflow)?;
 
-    candidate.cid = registrations.count;
+    candidate.cid = next_cid;
     candidate.poll_id = poll_id;
     candidate.name = name;
     candidate.has_registered = true;
 
-    // Pre-initialize the RatingResult so all judges pay equal cost (just their Rater PDA).
     let rating_result = &mut ctx.accounts.rating_result;
     rating_result.poll_id = poll_id;
-    rating_result.candidate_id = registrations.count;
+    rating_result.candidate_id = next_cid;
     rating_result.total_score = 0;
     rating_result.vote_count = 0;
 
@@ -67,7 +73,7 @@ pub struct RegisterCandidate<'info> {
         space = ANCHOR_DISCRIMINATOR_SIZE + Candidate::INIT_SPACE,
         seeds = [
             poll_id.to_le_bytes().as_ref(),
-            (registrations.count + 1).to_le_bytes().as_ref()
+            (poll.candidates + 1).to_le_bytes().as_ref()
         ],
         bump
     )]
@@ -80,7 +86,7 @@ pub struct RegisterCandidate<'info> {
         seeds = [
             b"rating_result",
             poll_id.to_le_bytes().as_ref(),
-            (registrations.count + 1).to_le_bytes().as_ref()
+            (poll.candidates + 1).to_le_bytes().as_ref()
         ],
         bump
     )]

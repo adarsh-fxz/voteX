@@ -1238,7 +1238,12 @@ export type Votex = {
         "fields": [
           {
             "name": "ratedMask",
-            "type": "u32"
+            "type": {
+              "array": [
+                "u64",
+                4
+              ]
+            }
           }
         ]
       }

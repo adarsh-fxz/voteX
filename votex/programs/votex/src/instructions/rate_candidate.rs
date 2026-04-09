@@ -33,7 +33,7 @@ pub fn rate_candidate(
         return Err(NotRatingPoll.into());
     }
 
-    if cid == 0 {
+    if cid == 0 || cid > 256 {
         return Err(InvalidCandidateId.into());
     }
 
@@ -62,13 +62,12 @@ pub fn rate_candidate(
         }
     }
 
-    // cid is 1-indexed; bit position is (cid - 1)
-    let bit = 1u32
-        .checked_shl((cid.saturating_sub(1)) as u32)
-        .ok_or(ArithmeticOverflow)?;
+    let word = ((cid - 1) / 64) as usize;
+    let bit = ((cid - 1) % 64) as u32;
+    let mask = 1u64.checked_shl(bit).ok_or(ArithmeticOverflow)?;
 
     let rater = &mut ctx.accounts.rater;
-    if rater.rated_mask & bit != 0 {
+    if rater.rated_mask[word] & mask != 0 {
         return Err(JudgeAlreadyRated.into());
     }
 
@@ -90,7 +89,7 @@ pub fn rate_candidate(
         slot: Clock::get()?.slot,
     });
 
-    rater.rated_mask |= bit;
+    rater.rated_mask[word] |= mask;
 
     Ok(())
 }
