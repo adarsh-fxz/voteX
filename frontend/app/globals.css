@@ -39,12 +39,27 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
-  --surface-gradient:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(244, 249, 255, 0.62));
+  --surface-gradient: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.82),
+    rgba(244, 249, 255, 0.62)
+  );
   --hero-gradient:
-    radial-gradient(circle at 20% 18%, rgba(56, 189, 248, 0.16), transparent 30%),
-    radial-gradient(circle at 78% 20%, rgba(45, 212, 191, 0.16), transparent 34%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(237, 245, 255, 0.42));
+    radial-gradient(
+      circle at 20% 18%,
+      rgba(56, 189, 248, 0.16),
+      transparent 30%
+    ),
+    radial-gradient(
+      circle at 78% 20%,
+      rgba(45, 212, 191, 0.16),
+      transparent 34%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.84),
+      rgba(237, 245, 255, 0.42)
+    );
   --shadow-soft: 0 26px 60px -28px rgba(24, 46, 92, 0.28);
   --shadow-strong: 0 30px 80px -34px rgba(15, 23, 42, 0.38);
 }
@@ -122,11 +137,22 @@
   --chart-4: oklch(0.8 0.08 88);
   --chart-5: oklch(0.71 0.09 22);
   --hero-gradient:
-    radial-gradient(circle at 18% 16%, rgba(56, 189, 248, 0.18), transparent 28%),
-    radial-gradient(circle at 82% 18%, rgba(45, 212, 191, 0.16), transparent 32%),
+    radial-gradient(
+      circle at 18% 16%,
+      rgba(56, 189, 248, 0.18),
+      transparent 28%
+    ),
+    radial-gradient(
+      circle at 82% 18%,
+      rgba(45, 212, 191, 0.16),
+      transparent 32%
+    ),
     linear-gradient(180deg, rgba(11, 20, 37, 0.88), rgba(8, 15, 29, 0.64));
-  --surface-gradient:
-    linear-gradient(180deg, rgba(18, 29, 52, 0.84), rgba(11, 20, 40, 0.6));
+  --surface-gradient: linear-gradient(
+    180deg,
+    rgba(18, 29, 52, 0.84),
+    rgba(11, 20, 40, 0.6)
+  );
   --shadow-soft: 0 28px 64px -30px rgba(0, 0, 0, 0.58);
   --shadow-strong: 0 36px 100px -38px rgba(0, 0, 0, 0.68);
 }
@@ -146,7 +172,11 @@
     font-family: var(--font-geist-sans), system-ui, sans-serif;
     background-image:
       radial-gradient(circle at top, rgba(125, 211, 252, 0.1), transparent 26%),
-      radial-gradient(circle at 80% 10%, rgba(45, 212, 191, 0.08), transparent 24%),
+      radial-gradient(
+        circle at 80% 10%,
+        rgba(45, 212, 191, 0.08),
+        transparent 24%
+      ),
       linear-gradient(180deg, rgba(255, 255, 255, 0.3), transparent 20%);
     background-attachment: fixed;
     -webkit-font-smoothing: antialiased;
@@ -156,13 +186,22 @@
   .dark body {
     background-image:
       radial-gradient(circle at top, rgba(56, 189, 248, 0.09), transparent 28%),
-      radial-gradient(circle at 80% 12%, rgba(45, 212, 191, 0.08), transparent 24%),
+      radial-gradient(
+        circle at 80% 12%,
+        rgba(45, 212, 191, 0.08),
+        transparent 24%
+      ),
       linear-gradient(180deg, rgba(15, 23, 42, 0.35), transparent 26%);
   }
 
   ::selection {
     background: color-mix(in oklab, var(--primary) 34%, white);
     color: var(--foreground);
+  }
+
+  .dark ::selection {
+    background: oklch(0.63 0.18 198);
+    color: oklch(0.12 0.02 245);
   }
 }
 
@@ -206,8 +245,16 @@
 
 .premium-grid {
   background-image:
-    linear-gradient(to right, color-mix(in oklab, var(--border) 60%, transparent) 1px, transparent 1px),
-    linear-gradient(to bottom, color-mix(in oklab, var(--border) 60%, transparent) 1px, transparent 1px);
+    linear-gradient(
+      to right,
+      color-mix(in oklab, var(--border) 60%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      to bottom,
+      color-mix(in oklab, var(--border) 60%, transparent) 1px,
+      transparent 1px
+    );
   background-size: 32px 32px;
 }
 
@@ -222,7 +269,12 @@
   right: 0;
   bottom: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--border) 80%, white 4%), transparent);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, var(--border) 80%, white 4%),
+    transparent
+  );
 }
 
 .text-gradient {
@@ -266,8 +318,16 @@
 }
 
 .wallet-adapter-button-trigger:hover {
-  background: color-mix(in oklab, var(--surface) 94%, var(--primary) 8%) !important;
-  border-color: color-mix(in oklab, var(--border) 70%, var(--primary) 26%) !important;
+  background: color-mix(
+    in oklab,
+    var(--surface) 94%,
+    var(--primary) 8%
+  ) !important;
+  border-color: color-mix(
+    in oklab,
+    var(--border) 70%,
+    var(--primary) 26%
+  ) !important;
   transform: translateY(-1px);
 }
 

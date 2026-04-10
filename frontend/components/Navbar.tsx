@@ -48,7 +48,9 @@ export function Navbar() {
       links.map((link) => ({
         ...link,
         href:
-          link.href.startsWith("#") && pathname !== "/" ? `/${link.href}` : link.href,
+          link.href.startsWith("#") && pathname !== "/"
+            ? `/${link.href}`
+            : link.href,
       })),
     [pathname],
   );
@@ -56,7 +58,7 @@ export function Navbar() {
   return (
     <header className="sticky top-0 z-50 px-3 py-3 sm:px-4">
       <div className="mx-auto max-w-7xl">
-        <div className="glass-panel flex min-h-16 items-center justify-between rounded-full px-3 py-2 sm:px-4">
+        <div className="glass-panel relative flex min-h-16 items-center justify-between rounded-full px-3 py-2 sm:px-4">
           <div className="flex items-center gap-3">
             <Link href="/" className="flex items-center gap-3">
               <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,rgba(56,189,248,0.9),rgba(45,212,191,0.9))] text-white shadow-[0_18px_40px_-26px_rgba(45,212,191,0.9)]">
@@ -71,35 +73,26 @@ export function Navbar() {
                 </p>
               </div>
             </Link>
-
-            <nav className="hidden items-center gap-1 rounded-full border border-border/60 bg-background/55 p-1 lg:flex">
-              {resolvedLinks.map(({ href, label }) => (
-                <Link
-                  key={href}
-                  href={href}
-                  className={cn(
-                    "rounded-full px-4 py-2 text-sm font-medium text-muted-foreground transition hover:bg-primary/8 hover:text-foreground",
-                    pathname === href && "bg-primary/10 text-foreground",
-                  )}
-                >
-                  {label}
-                </Link>
-              ))}
-            </nav>
           </div>
+
+          <nav className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-1 rounded-full border border-border/60 bg-background/55 p-1 lg:flex">
+            {resolvedLinks.map(({ href, label }) => (
+              <Link
+                key={href}
+                href={href}
+                className={cn(
+                  "rounded-full px-4 py-2 text-sm font-medium text-muted-foreground transition hover:bg-primary/8 hover:text-foreground",
+                  pathname === href && "bg-primary/10 text-foreground",
+                )}
+              >
+                {label}
+              </Link>
+            ))}
+          </nav>
 
           <div className="hidden items-center gap-2 lg:flex">
             <ThemeToggle />
-            <Link
-              href="/create"
-              className="button-secondary-premium gap-2"
-            >
-              Launch flow
-              <ShieldCheck className="size-4" />
-            </Link>
-            <WalletMultiButton
-              className="!h-11 !rounded-full !bg-background/70 !px-4"
-            />
+            <WalletMultiButton className="h-11! rounded-full! bg-background/70! px-4!" />
           </div>
 
           <div className="flex items-center gap-2 lg:hidden">
@@ -112,7 +105,11 @@ export function Navbar() {
               onClick={() => setMobileOpen((open) => !open)}
               className="size-11 rounded-full border-border/70 bg-background/70"
             >
-              {mobileOpen ? <X className="size-4" /> : <Menu className="size-4" />}
+              {mobileOpen ? (
+                <X className="size-4" />
+              ) : (
+                <Menu className="size-4" />
+              )}
             </Button>
           </div>
         </div>
@@ -148,7 +145,7 @@ export function Navbar() {
                   Create poll
                   <ArrowRight className="size-4" />
                 </Link>
-                <WalletMultiButton className="!h-11 !w-full !justify-center !rounded-full !bg-background/75" />
+                <WalletMultiButton className="h-11! w-full! justify-center! rounded-full! bg-background/75!" />
               </div>
             </motion.div>
           ) : null}
