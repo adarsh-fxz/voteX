@@ -301,6 +301,8 @@ function generatedCoverClass(id: string) {
   return variants[index];
 }
 
+type TimeFilter = "1H" | "24H" | "7D" | "All";
+
 function buildTimeSeries(
   candidates: Array<{
     cid: string;
@@ -311,12 +313,27 @@ function buildTimeSeries(
   votingStart: number,
   votingEnd: number,
   kind: "normal" | "rating",
+  timeFilter: TimeFilter = "All",
 ): { data: TimeSeriesPoint[]; series: ChartSeries[] } {
-  const now = Math.min(Date.now() / 1000, votingEnd);
-  const start = votingStart;
-  const elapsed = Math.max(now - start, 0);
-  const totalSpan = Math.max(votingEnd - start, 1);
-  const showClock = totalSpan <= 7 * 86400;
+  const nowSec = Math.min(Date.now() / 1000, votingEnd);
+  const totalSpan = Math.max(votingEnd - votingStart, 1);
+
+  // Determine the window start based on the time filter
+  const windowSeconds: Record<TimeFilter, number> = {
+    "1H": 3600,
+    "24H": 86400,
+    "7D": 7 * 86400,
+    All: Infinity,
+  };
+  const windowSec = windowSeconds[timeFilter];
+  const windowStart =
+    windowSec === Infinity
+      ? votingStart
+      : Math.max(votingStart, nowSec - windowSec);
+
+  const windowSpan = Math.max(nowSec - windowStart, 1);
+  const showClock =
+    timeFilter !== "All" || totalSpan <= 7 * 86400;
   const dateFmt = new Intl.DateTimeFormat(undefined, {
     month: "short",
     day: "numeric",
@@ -327,11 +344,13 @@ function buildTimeSeries(
   const numPoints = 8;
   const points: TimeSeriesPoint[] = [];
 
-  const currentFrac = Math.min(elapsed / totalSpan, 1);
+  const windowStartElapsed = windowStart - votingStart;
 
   for (let i = 0; i <= numPoints; i++) {
-    const frac = (i / numPoints) * currentFrac;
-    const ts = start + frac * totalSpan;
+    const windowFrac = i / numPoints;
+    const elapsed = windowStartElapsed + windowFrac * windowSpan;
+    const frac = elapsed / totalSpan;
+    const ts = votingStart + elapsed;
     const dateLabel = dateFmt.format(new Date(ts * 1000));
 
     const point: TimeSeriesPoint = { date: dateLabel };
@@ -340,7 +359,7 @@ function buildTimeSeries(
         kind === "rating" ? ((c.avgScore ?? 0) / 5) * 100 : c.percent;
       // last point: use exact value so 100% shows as 100%, not ~99.75%
       const eased =
-        frac === 0
+        frac <= 0
           ? 0
           : i === numPoints
             ? targetValue
@@ -355,7 +374,6 @@ function buildTimeSeries(
 
 type ChartView = "line" | "donut";
 const TIME_FILTERS = ["1H", "24H", "7D", "All"] as const;
-type TimeFilter = (typeof TIME_FILTERS)[number];
 
 function AnalyticsSection({ overview }: { overview: PollOverview }) {
   const [chartView, setChartView] = useState<ChartView>("line");
@@ -367,12 +385,14 @@ function AnalyticsSection({ overview }: { overview: PollOverview }) {
       overview.votingStart,
       overview.votingEnd,
       overview.kind,
+      timeFilter,
     );
   }, [
     overview.candidates,
     overview.votingStart,
     overview.votingEnd,
     overview.kind,
+    timeFilter,
   ]);
 
   const donutData = useMemo(
