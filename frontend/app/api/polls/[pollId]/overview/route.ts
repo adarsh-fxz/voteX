@@ -17,12 +17,14 @@ export const runtime = "nodejs";
 type MetadataShape = {
   title?: string;
   description?: string;
+  image?: string;
 };
 
 type DetailOverview = {
   id: string;
   title: string;
   description: string;
+  imageHref: string | null;
   kind: "normal" | "rating";
   kindLabel: string;
   accessMode: "open" | "merkleRestricted";
@@ -62,7 +64,10 @@ const detailCache = new Map<
 const detailInflight = new Map<string, Promise<DetailOverview>>();
 const metadataCache = new Map<
   string,
-  { expiresAt: number; payload: { title: string; description: string } }
+  {
+    expiresAt: number;
+    payload: { title: string; description: string; image: string | null };
+  }
 >();
 
 function gpaFriendlyRpcUrl(): string {
@@ -83,7 +88,12 @@ const readonlyProgram = createReadonlyProgram(connection);
 async function readMetadata(metadataUri: string | null | undefined) {
   const href = ipfsGatewayHrefFromStored(metadataUri);
   if (!href) {
-    return { title: "", description: "", metaHref: null as string | null };
+    return {
+      title: "",
+      description: "",
+      image: null as string | null,
+      metaHref: null as string | null,
+    };
   }
 
   const cached = metadataCache.get(href);
@@ -94,12 +104,13 @@ async function readMetadata(metadataUri: string | null | undefined) {
   try {
     const res = await fetch(href, { cache: "force-cache" });
     if (!res.ok) {
-      return { title: "", description: "", metaHref: href };
+      return { title: "", description: "", image: null, metaHref: href };
     }
     const data = (await res.json()) as MetadataShape;
     const payload = {
       title: data.title?.trim() ?? "",
       description: data.description?.trim() ?? "",
+      image: data.image ? ipfsGatewayHrefFromStored(data.image) : null,
     };
     metadataCache.set(href, {
       expiresAt: Date.now() + 10 * 60 * 1000,
@@ -107,7 +118,7 @@ async function readMetadata(metadataUri: string | null | undefined) {
     });
     return { ...payload, metaHref: href };
   } catch {
-    return { title: "", description: "", metaHref: href };
+    return { title: "", description: "", image: null, metaHref: href };
   }
 }
 
@@ -176,6 +187,7 @@ async function buildDetailOverview(pollId: string): Promise<DetailOverview> {
     id: pollId,
     title: metadata.title || `Poll #${pollId}`,
     description: metadata.description,
+    imageHref: metadata.image,
     kind,
     kindLabel: pollKindLabel(poll.kind),
     accessMode,

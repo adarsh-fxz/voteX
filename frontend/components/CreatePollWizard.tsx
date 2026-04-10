@@ -8,15 +8,18 @@ import {
   Calendar,
   Check,
   ChevronRight,
+  ImagePlus,
   Loader2,
   Plus,
   Trash2,
   Users,
   Vote,
   Wallet,
+  X,
 } from "lucide-react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useVotexProgram } from "@/hooks/useVotexProgram";
 import { votexProgramId } from "@/lib/anchor";
@@ -80,6 +83,9 @@ export function CreatePollWizard() {
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [coverImage, setCoverImage] = useState<File | null>(null);
+  const [coverPreview, setCoverPreview] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [kind, setKind] = useState<"normal" | "rating">("normal");
   const [access, setAccess] = useState<"open" | "merkle">("open");
 
@@ -108,6 +114,30 @@ export function CreatePollWizard() {
     setCandidates((prev) => prev.filter((_, i) => i !== index));
   }
 
+  function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setFieldErr((prev) => ({ ...prev, image: "Image must be under 5 MB." }));
+      return;
+    }
+    setFieldErr((prev) => {
+      const next = { ...prev };
+      delete next.image;
+      return next;
+    });
+    setCoverImage(file);
+    setCoverPreview(URL.createObjectURL(file));
+  }
+
+  function clearImage() {
+    setCoverImage(null);
+    if (coverPreview) URL.revokeObjectURL(coverPreview);
+    setCoverPreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
   const parsedCandidates = candidates.map((s) => s.trim()).filter(Boolean);
 
   function validateStep(targetStep: Step) {
@@ -122,7 +152,8 @@ export function CreatePollWizard() {
 
     if (targetStep >= 3) {
       if (access === "merkle" && !regEnd)
-        nextErrors.regEnd = "Registration end is required for restricted polls.";
+        nextErrors.regEnd =
+          "Registration end is required for restricted polls.";
       if (!voteStart) nextErrors.voteStart = "Voting start is required.";
       if (!voteEnd) nextErrors.voteEnd = "Voting end is required.";
 
@@ -172,14 +203,30 @@ export function CreatePollWizard() {
     }
   }
 
+  async function uploadImageToIpfs(): Promise<string | undefined> {
+    if (!coverImage) return undefined;
+    const form = new FormData();
+    form.append("file", coverImage, coverImage.name);
+    form.append("name", `poll-cover-${Date.now()}`);
+    const res = await fetch("/api/pinata/file", {
+      method: "POST",
+      body: form,
+    });
+    const j = (await res.json()) as { cid?: string; error?: string };
+    if (!res.ok) throw new Error(j.error ?? "Image upload failed");
+    if (!j.cid) throw new Error("No CID returned for image");
+    return j.cid;
+  }
+
   async function uploadMetadata(): Promise<string> {
+    const imageCid = await uploadImageToIpfs();
+    const content: Record<string, unknown> = { title, description };
+    if (imageCid) content.image = imageCid;
+
     const res = await fetch("/api/pinata/json", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: "poll-metadata",
-        content: { title, description },
-      }),
+      body: JSON.stringify({ name: "poll-metadata", content }),
     });
     const j = (await res.json()) as { cid?: string; error?: string };
     if (!res.ok) throw new Error(j.error ?? "metadata upload failed");
@@ -237,8 +284,11 @@ export function CreatePollWizard() {
 
       const pollIdBn = nextPid;
       for (const name of names) {
-        if (name.length > 32) throw new Error(`Name too long (max 32): ${name}`);
-        const pollAcc = await program.account.poll.fetch(pollPda(pid, pollIdBn));
+        if (name.length > 32)
+          throw new Error(`Name too long (max 32): ${name}`);
+        const pollAcc = await program.account.poll.fetch(
+          pollPda(pid, pollIdBn),
+        );
         const cid = pollAcc.candidates.add(new BN(1));
         await program.methods
           .registerCandidate(pollIdBn, name)
@@ -304,7 +354,11 @@ export function CreatePollWizard() {
                           : "border-border/70 bg-background/60 text-muted-foreground"
                     }`}
                   >
-                    {done ? <Check className="size-3.5" /> : <Icon className="size-3.5" />}
+                    {done ? (
+                      <Check className="size-3.5" />
+                    ) : (
+                      <Icon className="size-3.5" />
+                    )}
                   </div>
                   <span
                     className={`hidden text-[0.65rem] font-medium tracking-wide sm:block ${
@@ -322,9 +376,7 @@ export function CreatePollWizard() {
                   <div className="mx-1 h-px flex-1 sm:mx-2">
                     <div
                       className={`h-full transition-all duration-300 ${
-                        step > s
-                          ? "bg-primary/40"
-                          : "bg-border/60"
+                        step > s ? "bg-primary/40" : "bg-border/60"
                       }`}
                     />
                   </div>
@@ -377,6 +429,49 @@ export function CreatePollWizard() {
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Provide any background voters should know before casting a vote."
               />
+            </div>
+
+            <div>
+              <Label>Cover image</Label>
+              <p className="mb-2 text-xs text-muted-foreground">
+                Optional · JPG, PNG, GIF or WebP · max 5 MB
+              </p>
+              {coverPreview ? (
+                <div className="relative w-full overflow-hidden rounded-2xl border border-border/70">
+                  <Image
+                    src={coverPreview}
+                    alt="Cover preview"
+                    width={600}
+                    height={240}
+                    className="h-40 w-full object-cover"
+                    unoptimized
+                  />
+                  <button
+                    type="button"
+                    onClick={clearImage}
+                    className="absolute right-2 top-2 flex size-7 items-center justify-center rounded-full border border-white/40 bg-black/50 text-white transition hover:bg-black/70"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 py-8 text-sm font-medium text-muted-foreground transition hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+                >
+                  <ImagePlus className="size-5" />
+                  Click to upload a cover image
+                </button>
+              )}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleImageSelect}
+              />
+              <FieldError msg={fieldErr.image} />
             </div>
 
             <div className="flex justify-end pt-1">
@@ -445,7 +540,9 @@ export function CreatePollWizard() {
                       </span>
                     )}
                     <p className="text-sm font-semibold">{t}</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">{desc}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {desc}
+                    </p>
                   </button>
                 ))}
               </div>
@@ -487,7 +584,9 @@ export function CreatePollWizard() {
                       </span>
                     )}
                     <p className="text-sm font-semibold">{t}</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">{desc}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {desc}
+                    </p>
                   </button>
                 ))}
               </div>

@@ -13,11 +13,13 @@ export const runtime = "nodejs";
 
 type MetadataShape = {
   title?: string;
+  image?: string;
 };
 
 type PollOverviewItem = {
   id: string;
   title: string;
+  imageHref: string | null;
   kindLabel: string;
   accessLabel: string;
   phase: string;
@@ -45,7 +47,10 @@ const PUBLIC_HTTP: Record<string, string> = {
 
 let overviewCache: CachedOverview | null = null;
 let overviewInflight: Promise<PollOverviewItem[]> | null = null;
-const metadataCache = new Map<string, { expiresAt: number; title: string }>();
+const metadataCache = new Map<
+  string,
+  { expiresAt: number; title: string; image: string | null }
+>();
 
 const CACHE_TTL_MS = 60_000; // serve cached data for 60s
 const STALE_TTL_MS = 120_000; // background-refresh up to 2 min after expiry
@@ -65,30 +70,32 @@ const connection = new Connection(gpaFriendlyRpcUrl(), {
 
 const readonlyProgram = createReadonlyProgram(connection);
 
-async function readMetadataTitle(
+async function readMetadata(
   metadataUri: string | null | undefined,
-  fallback: string,
-) {
+  fallbackTitle: string,
+): Promise<{ title: string; image: string | null }> {
   const href = ipfsGatewayHrefFromStored(metadataUri);
-  if (!href) return fallback;
+  if (!href) return { title: fallbackTitle, image: null };
 
   const cached = metadataCache.get(href);
   if (cached && cached.expiresAt > Date.now()) {
-    return cached.title;
+    return { title: cached.title, image: cached.image };
   }
 
   try {
     const res = await fetch(href, { cache: "force-cache" });
-    if (!res.ok) return fallback;
+    if (!res.ok) return { title: fallbackTitle, image: null };
     const data = (await res.json()) as MetadataShape;
-    const title = data.title?.trim() || fallback;
+    const title = data.title?.trim() || fallbackTitle;
+    const image = data.image ? ipfsGatewayHrefFromStored(data.image) : null;
     metadataCache.set(href, {
       expiresAt: Date.now() + 10 * 60 * 1000,
       title,
+      image,
     });
-    return title;
+    return { title, image };
   } catch {
-    return fallback;
+    return { title: fallbackTitle, image: null };
   }
 }
 
@@ -159,7 +166,7 @@ async function buildOverview(): Promise<PollOverviewItem[]> {
       }))
       .sort((a, b) => Number(b.id) - Number(a.id))
       .map(async ({ id, poll }) => {
-        const title = await readMetadataTitle(poll.metadataUri, `Poll #${id}`);
+        const meta = await readMetadata(poll.metadataUri, `Poll #${id}`);
         const rawCandidates = candidatesByPoll.get(id) ?? [];
         const candidateValues = rawCandidates
           .map((candidate) => ({
@@ -179,7 +186,8 @@ async function buildOverview(): Promise<PollOverviewItem[]> {
 
         return {
           id,
-          title,
+          title: meta.title,
+          imageHref: meta.image,
           kindLabel: pollKindLabel(poll.kind),
           accessLabel: accessModeLabel(poll.accessMode),
           phase: pollPhase(poll),

@@ -7,6 +7,15 @@ const nextConfig: NextConfig = {
     "@solana/wallet-adapter-react-ui",
     "@solana/wallet-adapter-wallets",
   ],
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "gateway.pinata.cloud",
+        pathname: "/ipfs/**",
+      },
+    ],
+  },
 };
 
 export default nextConfig;

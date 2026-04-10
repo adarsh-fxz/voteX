@@ -7,6 +7,7 @@ import {
   MapPin,
   Vote,
 } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +17,7 @@ import { nowUnix } from "@/lib/poll-utils";
 type PollRow = {
   id: string;
   title: string;
+  imageHref: string | null;
   kindLabel: string;
   accessLabel: string;
   phase: string;
@@ -87,11 +89,31 @@ function PollCardArtwork({
   kind,
   accessLabel,
   pollId,
+  imageHref,
 }: {
   kind: string;
   accessLabel: string;
   pollId: string;
+  imageHref: string | null;
 }) {
+  if (imageHref) {
+    return (
+      <div className="relative h-44 overflow-hidden border-b border-border/70">
+        <Image
+          src={imageHref}
+          alt=""
+          fill
+          className="object-cover"
+          unoptimized
+        />
+        <div className="absolute inset-0 bg-linear-to-t from-black/30 to-transparent" />
+        <div className="absolute left-4 top-4 rounded-full border border-white/50 bg-white/60 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-700 backdrop-blur dark:border-white/10 dark:bg-slate-900/50 dark:text-slate-200">
+          {accessLabel}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className={`relative h-44 overflow-hidden border-b border-border/70 bg-linear-to-br ${generatedCoverClass(
@@ -262,6 +284,7 @@ export function PollsListClient() {
                   kind={row.kindLabel}
                   accessLabel={row.accessLabel}
                   pollId={row.id}
+                  imageHref={row.imageHref}
                 />
 
                 <div className="space-y-5 p-5">

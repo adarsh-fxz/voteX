@@ -18,6 +18,7 @@ import {
   TrendingUp,
   Vote,
 } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PublicKey } from "@solana/web3.js";
@@ -226,6 +227,7 @@ type PollOverview = {
   id: string;
   title: string;
   description: string;
+  imageHref: string | null;
   kind: "normal" | "rating";
   kindLabel: string;
   accessMode: "open" | "merkleRestricted";
@@ -556,11 +558,31 @@ function PollCoverArtwork({
   accessLabel,
   kind,
   pollId,
+  imageHref,
 }: {
   accessLabel: string;
   kind: string;
   pollId: string;
+  imageHref: string | null;
 }) {
+  if (imageHref) {
+    return (
+      <div className="relative h-40 overflow-hidden rounded-[1.5rem] border border-border/70">
+        <Image
+          src={imageHref}
+          alt=""
+          fill
+          className="object-cover"
+          unoptimized
+        />
+        <div className="absolute inset-0 bg-linear-to-t from-black/30 to-transparent" />
+        <div className="absolute left-4 top-4 rounded-full border border-white/50 bg-white/60 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-700 backdrop-blur dark:border-white/10 dark:bg-slate-900/50 dark:text-slate-200">
+          {accessLabel}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className={`relative h-40 overflow-hidden rounded-[1.5rem] border border-border/70 bg-linear-to-br ${generatedCoverClass(
@@ -710,6 +732,7 @@ export function PollDetailClient({ pollIdStr }: Props) {
                 accessLabel={overview.accessLabel}
                 kind={overview.kindLabel}
                 pollId={overview.id}
+                imageHref={overview.imageHref}
               />
               <div>
                 <h2 className="font-heading text-3xl font-semibold tracking-[-0.05em] text-foreground sm:text-4xl">
