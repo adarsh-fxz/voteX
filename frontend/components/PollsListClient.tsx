@@ -84,22 +84,22 @@ function generatedCoverClass(id: string) {
 }
 
 function PollCardArtwork({
-  title,
   kind,
+  accessLabel,
   pollId,
 }: {
-  title: string;
   kind: string;
+  accessLabel: string;
   pollId: string;
 }) {
   return (
     <div
-      className={`relative h-44 overflow-hidden border-b border-border/70 bg-gradient-to-br ${generatedCoverClass(
+      className={`relative h-44 overflow-hidden border-b border-border/70 bg-linear-to-br ${generatedCoverClass(
         pollId,
       )}`}
     >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.16)_0,transparent_48%)]" />
-      <div className="absolute inset-0 opacity-40 [background-image:linear-gradient(to_right,rgba(148,163,184,0.14)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.14)_1px,transparent_1px)] [background-size:26px_26px]" />
+      <div className="absolute inset-0 opacity-40 bg-[linear-gradient(to_right,rgba(148,163,184,0.14)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.14)_1px,transparent_1px)] bg-size-[26px_26px]" />
       <div className="absolute left-1/2 top-6 h-28 w-28 -translate-x-1/2 rounded-full border border-white/40 bg-white/30 blur-2xl dark:border-primary/10 dark:bg-primary/10" />
       <div className="absolute inset-x-0 bottom-7 flex justify-center">
         <div className="rounded-sm bg-red-600 px-4 py-2 text-sm font-extrabold uppercase tracking-[0.08em] text-white shadow-lg">
@@ -112,16 +112,19 @@ function PollCardArtwork({
         </div>
       </div>
       <div className="absolute left-4 top-4 rounded-full border border-white/50 bg-white/60 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-700 backdrop-blur dark:border-white/10 dark:bg-slate-900/50 dark:text-slate-200">
-        {title.slice(0, 18)}
+        {accessLabel}
       </div>
     </div>
   );
 }
 
+type FilterTab = "all" | "active" | "ended";
+
 export function PollsListClient() {
   const [rows, setRows] = useState<PollRow[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<FilterTab>("all");
   const loadGenRef = useRef(0);
 
   useEffect(() => {
@@ -185,106 +188,163 @@ export function PollsListClient() {
     );
   }
 
+  const isActivePhase = (phase: string) => phase !== "ended";
+
+  const filteredRows = rows.filter((row) => {
+    if (filter === "active") return isActivePhase(row.phase);
+    if (filter === "ended") return row.phase === "ended";
+    return true;
+  });
+
+  const tabs: { key: FilterTab; label: string }[] = [
+    { key: "all", label: "All" },
+    { key: "active", label: "Active" },
+    { key: "ended", label: "Ended" },
+  ];
+
   return (
-    <ul className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-      {rows.map((row) => (
-        <li key={row.id}>
-          <Link
-            href={`/poll/${row.id}`}
-            className="block overflow-hidden rounded-[1.75rem] border border-border/70 bg-card shadow-[var(--shadow-soft)] transition hover:-translate-y-1 hover:border-primary/25"
-          >
-            <PollCardArtwork
-              title={row.title}
-              kind={row.kindLabel}
-              pollId={row.id}
-            />
+    <div className="space-y-5">
+      <div className="flex items-center gap-2">
+        {tabs.map((tab) => {
+          const count =
+            tab.key === "all"
+              ? rows.length
+              : rows.filter((r) =>
+                  tab.key === "active"
+                    ? isActivePhase(r.phase)
+                    : r.phase === "ended",
+                ).length;
+          const isActive = filter === tab.key;
+          return (
+            <button
+              key={tab.key}
+              onClick={() => setFilter(tab.key)}
+              className={`flex items-center gap-1.5 rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${
+                isActive
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-border/70 bg-background/65 text-muted-foreground hover:border-primary/25 hover:text-foreground"
+              }`}
+            >
+              {tab.label}
+              <span
+                className={`rounded-full px-1.5 py-0.5 text-xs ${
+                  isActive
+                    ? "bg-primary/20 text-primary"
+                    : "bg-muted text-muted-foreground"
+                }`}
+              >
+                {count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
 
-            <div className="space-y-5 p-5">
-              <div className="flex flex-wrap gap-2">
-                <Badge
-                  variant="outline"
-                  className={`rounded-full px-3 py-1 text-sm ${statusTone(row.phase)}`}
-                >
-                  <span className="size-2 rounded-full bg-current opacity-75" />
-                  {statusLabel(row.phase)}
-                </Badge>
-                <Badge
-                  variant="outline"
-                  className="rounded-full border-border/70 bg-background/65 px-3 py-1 text-sm text-muted-foreground"
-                >
-                  <MapPin className="size-3.5" />
-                  {SOLANA_CLUSTER_LABEL}
-                </Badge>
-                <Badge
-                  variant="outline"
-                  className="rounded-full border-border/70 bg-background/65 px-3 py-1 text-sm text-muted-foreground"
-                >
-                  <Vote className="size-3.5" />
-                  {row.kindLabel}
-                </Badge>
-              </div>
+      {filteredRows.length === 0 ? (
+        <div className="glass-panel rounded-[1.75rem] px-5 py-8 text-muted-foreground">
+          No {filter !== "all" ? filter : ""} polls found.
+        </div>
+      ) : (
+        <ul className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+          {filteredRows.map((row) => (
+            <li key={row.id}>
+              <Link
+                href={`/poll/${row.id}`}
+                className="block overflow-hidden rounded-[1.75rem] border border-border/70 bg-card shadow-(--shadow-soft) transition hover:-translate-y-1 hover:border-primary/25"
+              >
+                <PollCardArtwork
+                  kind={row.kindLabel}
+                  accessLabel={row.accessLabel}
+                  pollId={row.id}
+                />
 
-              <div>
-                <h2 className="line-clamp-2 font-heading text-[1.55rem] font-semibold tracking-[-0.04em] text-foreground">
-                  {row.title}
-                </h2>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {row.accessLabel} access
-                </p>
-              </div>
+                <div className="space-y-5 p-5">
+                  <div className="flex flex-wrap gap-2">
+                    <Badge
+                      variant="outline"
+                      className={`rounded-full px-3 py-1 text-sm ${statusTone(row.phase)}`}
+                    >
+                      <span className="size-2 rounded-full bg-current opacity-75" />
+                      {statusLabel(row.phase)}
+                    </Badge>
+                    <Badge
+                      variant="outline"
+                      className="rounded-full border-border/70 bg-background/65 px-3 py-1 text-sm text-muted-foreground"
+                    >
+                      <MapPin className="size-3.5" />
+                      {SOLANA_CLUSTER_LABEL}
+                    </Badge>
+                    <Badge
+                      variant="outline"
+                      className="rounded-full border-border/70 bg-background/65 px-3 py-1 text-sm text-muted-foreground"
+                    >
+                      <Vote className="size-3.5" />
+                      {row.kindLabel}
+                    </Badge>
+                  </div>
 
-              <div className="rounded-[1.35rem] border border-border/70 bg-background/55 p-3">
-                {row.candidates.length > 0 ? (
-                  <div className="space-y-2">
-                    {row.candidates.map((candidate, index) => (
-                      <div
-                        key={`${row.id}-${candidate.name}`}
-                        className="flex items-center justify-between gap-3 rounded-2xl bg-white/50 px-3 py-3 dark:bg-slate-900/40"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-base font-medium text-foreground">
-                            {candidate.name}
-                          </p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {candidate.value} vote{candidate.value === 1 ? "" : "s"}
-                          </p>
-                        </div>
-                        <div
-                          className={`shrink-0 rounded-xl px-3 py-2 text-base font-semibold ${
-                            index === 0
-                              ? "bg-rose-500/14 text-rose-700 dark:text-rose-300"
-                              : "bg-indigo-500/12 text-indigo-700 dark:text-indigo-300"
-                          }`}
-                        >
-                          {formatPercent(candidate.percent)} →
-                        </div>
+                  <div>
+                    <h2 className="line-clamp-2 font-heading text-[1.55rem] font-semibold tracking-[-0.04em] text-foreground">
+                      {row.title}
+                    </h2>
+                  </div>
+
+                  <div className="rounded-[1.35rem] border border-border/70 bg-background/55 p-3">
+                    {row.candidates.length > 0 ? (
+                      <div className="space-y-2">
+                        {row.candidates.map((candidate, index) => (
+                          <div
+                            key={`${row.id}-${candidate.name}`}
+                            className="flex items-center justify-between gap-3 rounded-2xl bg-white/50 px-3 py-3 dark:bg-slate-900/40"
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate text-base font-medium text-foreground">
+                                {candidate.name}
+                              </p>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {candidate.value} vote
+                                {candidate.value === 1 ? "" : "s"}
+                              </p>
+                            </div>
+                            <div
+                              className={`shrink-0 rounded-xl px-3 py-2 text-base font-semibold ${
+                                index === 0
+                                  ? "bg-rose-500/14 text-rose-700 dark:text-rose-300"
+                                  : "bg-indigo-500/12 text-indigo-700 dark:text-indigo-300"
+                              }`}
+                            >
+                              {formatPercent(candidate.percent)} →
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    ) : (
+                      <div className="flex items-center gap-2 rounded-2xl bg-white/50 px-3 py-4 text-sm text-muted-foreground dark:bg-slate-900/40">
+                        <ChartNoAxesCombined className="size-4 text-primary" />
+                        No votes yet. Open the poll to participate or review the
+                        setup.
+                      </div>
+                    )}
                   </div>
-                ) : (
-                  <div className="flex items-center gap-2 rounded-2xl bg-white/50 px-3 py-4 text-sm text-muted-foreground dark:bg-slate-900/40">
-                    <ChartNoAxesCombined className="size-4 text-primary" />
-                    No votes yet. Open the poll to participate or review the setup.
-                  </div>
-                )}
-              </div>
 
-              <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
-                <div className="flex items-center gap-2">
-                  <ChartNoAxesCombined className="size-4 text-primary" />
-                  <span>
-                    {row.totalVotes} vote{row.totalVotes === 1 ? "" : "s"}
-                  </span>
+                  <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+                    <div className="flex items-center gap-2">
+                      <ChartNoAxesCombined className="size-4 text-primary" />
+                      <span>
+                        {row.totalVotes} vote{row.totalVotes === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 font-medium">
+                      <Clock3 className="size-4 text-primary" />
+                      <span>{timeLabel(row)}</span>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 font-medium">
-                  <Clock3 className="size-4 text-primary" />
-                  <span>{timeLabel(row)}</span>
-                </div>
-              </div>
-            </div>
-          </Link>
-        </li>
-      ))}
-    </ul>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

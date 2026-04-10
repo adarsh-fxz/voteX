@@ -65,8 +65,7 @@ function candidateChartSeries(
   }
   return candidates.map((c) => ({
     key: `c_${c.cid}`,
-    name:
-      (byName.get(c.name) ?? 0) > 1 ? `${c.name} (${c.cid})` : c.name,
+    name: (byName.get(c.name) ?? 0) > 1 ? `${c.name} (${c.cid})` : c.name,
   }));
 }
 
@@ -328,8 +327,10 @@ function buildTimeSeries(
   const numPoints = 8;
   const points: TimeSeriesPoint[] = [];
 
+  const currentFrac = Math.min(elapsed / totalSpan, 1);
+
   for (let i = 0; i <= numPoints; i++) {
-    const frac = (i / numPoints) * Math.min(elapsed / totalSpan, 1);
+    const frac = (i / numPoints) * currentFrac;
     const ts = start + frac * totalSpan;
     const dateLabel = dateFmt.format(new Date(ts * 1000));
 
@@ -337,7 +338,13 @@ function buildTimeSeries(
     candidates.forEach((c, idx) => {
       const targetValue =
         kind === "rating" ? ((c.avgScore ?? 0) / 5) * 100 : c.percent;
-      const eased = frac === 0 ? 0 : targetValue * (1 - Math.exp(-6 * frac));
+      // last point: use exact value so 100% shows as 100%, not ~99.75%
+      const eased =
+        frac === 0
+          ? 0
+          : i === numPoints
+            ? targetValue
+            : targetValue * (1 - Math.exp(-6 * frac));
       point[series[idx].key] = Math.round(eased * 10) / 10;
     });
     points.push(point);
@@ -524,11 +531,11 @@ function AnalyticsSection({ overview }: { overview: PollOverview }) {
 }
 
 function PollCoverArtwork({
-  title,
+  accessLabel,
   kind,
   pollId,
 }: {
-  title: string;
+  accessLabel: string;
   kind: string;
   pollId: string;
 }) {
@@ -551,7 +558,7 @@ function PollCoverArtwork({
         </div>
       </div>
       <div className="absolute left-4 top-4 rounded-full border border-white/50 bg-white/60 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-700 backdrop-blur dark:border-white/10 dark:bg-slate-900/50 dark:text-slate-200">
-        {title.slice(0, 22)}
+        {accessLabel}
       </div>
     </div>
   );
@@ -564,6 +571,7 @@ export function PollDetailClient({ pollIdStr }: Props) {
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [votedOptionLabel, setVotedOptionLabel] = useState<string | null>(null);
+  const [hasVoted, setHasVoted] = useState(false);
 
   const pid = useMemo(() => new BN(pollIdStr), [pollIdStr]);
   const loadGenRef = useRef(0);
@@ -601,27 +609,42 @@ export function PollDetailClient({ pollIdStr }: Props) {
     let alive = true;
 
     async function loadVotedOption() {
-      if (!program || !publicKey || !overview || overview.kind !== "normal") {
+      if (!program || !publicKey || !overview) {
         setVotedOptionLabel(null);
+        setHasVoted(false);
         return;
       }
       try {
-        const voter = await program.account.voter.fetchNullable(
-          voterPda(votexProgramId(), pid, publicKey),
-        );
-        if (!alive) return;
-        if (!voter?.hasVoted) {
+        if (overview.kind === "normal") {
+          const voter = await program.account.voter.fetchNullable(
+            voterPda(votexProgramId(), pid, publicKey),
+          );
+          if (!alive) return;
+          if (!voter?.hasVoted) {
+            setVotedOptionLabel(null);
+            setHasVoted(false);
+            return;
+          }
+          const votedCid = voter.cid.toString();
+          const pickedCandidate = overview.candidates.find(
+            (c) => c.cid === votedCid,
+          );
+          setVotedOptionLabel(pickedCandidate?.name ?? `Option ${votedCid}`);
+          setHasVoted(true);
+        } else {
+          // rating poll — check rater PDA
+          const rater = await program.account.rater.fetchNullable(
+            raterPda(votexProgramId(), pid, publicKey),
+          );
+          if (!alive) return;
+          // rater account existing means the user has submitted at least one rating
+          setHasVoted(rater !== null);
           setVotedOptionLabel(null);
-          return;
         }
-        const votedCid = voter.cid.toString();
-        const pickedCandidate = overview.candidates.find(
-          (c) => c.cid === votedCid,
-        );
-        setVotedOptionLabel(pickedCandidate?.name ?? `Option ${votedCid}`);
       } catch {
         if (alive) {
           setVotedOptionLabel(null);
+          setHasVoted(false);
         }
       }
     }
@@ -657,7 +680,7 @@ export function PollDetailClient({ pollIdStr }: Props) {
           <section className="glass-panel rounded-[1.85rem] p-5 sm:p-6">
             <div className="grid gap-5 md:grid-cols-[220px_minmax(0,1fr)]">
               <PollCoverArtwork
-                title={overview.title}
+                accessLabel={overview.accessLabel}
                 kind={overview.kindLabel}
                 pollId={overview.id}
               />
@@ -798,83 +821,107 @@ export function PollDetailClient({ pollIdStr }: Props) {
 
         <aside className="space-y-6">
           <section className="glass-panel rounded-[1.85rem] p-5 sm:p-6">
-            <p className="mt-3 text-center text-lg leading-8 text-muted-foreground">
-              <strong>
-                {overview.kind === "rating"
-                  ? "Thanks for submitting your rating!"
-                  : "Thank you for your vote!"}
-              </strong>
-              {overview.kind === "normal" ? (
-                <>
-                  <br />
-                  You have voted for{" "}
-                  <strong className="text-violet-600 dark:text-violet-400">
-                    {votedOptionLabel ?? "the option chosen"}
-                  </strong>
-                </>
-              ) : null}
-            </p>
-
-            <div className="mt-6 space-y-3">
-              {overview.candidates.map((candidate, index) => (
-                <div
-                  key={candidate.cid}
-                  className={`rounded-[1.25rem] border px-4 py-3 ${
-                    index === 0
-                      ? "border-violet-500/40 bg-violet-500/8"
-                      : index === 1
-                        ? "border-rose-500/30 bg-rose-500/6"
-                        : "border-emerald-500/25 bg-emerald-500/6"
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-medium text-foreground">
-                      {candidate.name}
-                    </span>
-                    <span className="text-lg font-semibold text-foreground">
+            {publicKey &&
+            program &&
+            overview.phase === "voting" &&
+            !hasVoted ? (
+              <InlinVotePanel
+                kind={overview.kind}
+                accessMode={overview.accessMode}
+                pollId={pid}
+                candidates={overview.candidates}
+                program={program}
+                publicKey={publicKey}
+                onDone={() => {
+                  load();
+                }}
+              />
+            ) : (
+              <>
+                {hasVoted && (
+                  <p className="mb-4 text-center text-lg leading-8 text-muted-foreground">
+                    <strong>
                       {overview.kind === "rating"
-                        ? candidate.avgScore !== null
-                          ? `${candidate.avgScore.toFixed(1)}/5`
-                          : "0.0/5"
-                        : formatPercent(candidate.percent)}
-                    </span>
+                        ? "Thanks for submitting your rating!"
+                        : "Thank you for your vote!"}
+                    </strong>
+                    {overview.kind === "normal" && votedOptionLabel ? (
+                      <>
+                        <br />
+                        You voted for{" "}
+                        <strong className="text-violet-600 dark:text-violet-400">
+                          {votedOptionLabel}
+                        </strong>
+                      </>
+                    ) : null}
+                  </p>
+                )}
+
+                <div className="space-y-3">
+                  {overview.candidates.map((candidate, index) => (
+                    <div
+                      key={candidate.cid}
+                      className={`rounded-[1.25rem] border px-4 py-3 ${
+                        index === 0
+                          ? "border-violet-500/40 bg-violet-500/8"
+                          : index === 1
+                            ? "border-rose-500/30 bg-rose-500/6"
+                            : "border-emerald-500/25 bg-emerald-500/6"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-medium text-foreground">
+                          {candidate.name}
+                        </span>
+                        <span className="text-lg font-semibold text-foreground">
+                          {overview.kind === "rating"
+                            ? candidate.avgScore !== null
+                              ? `${candidate.avgScore.toFixed(1)}/5`
+                              : "0.0/5"
+                            : formatPercent(candidate.percent)}
+                        </span>
+                      </div>
+                      {overview.kind === "rating" ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {candidate.votes} rating
+                          {candidate.votes === 1 ? "" : "s"}
+                        </p>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+
+                {hasVoted && (
+                  <div className="mt-5 flex items-center justify-center gap-2 rounded-[1.25rem] border border-border/70 bg-background/55 px-4 py-4 text-center text-sm text-muted-foreground">
+                    <Lock className="size-4 text-primary" />
+                    <span>Vote submitted</span>
                   </div>
-                  {overview.kind === "rating" ? (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {candidate.votes} rating{candidate.votes === 1 ? "" : "s"}
-                    </p>
+                )}
+
+                <div className="mt-5 grid gap-3">
+                  <a
+                    href={overview.explorerHref}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="button-primary-premium justify-center gap-2 text-sm"
+                  >
+                    View on Solana Explorer
+                    <ExternalLink className="size-4" />
+                  </a>
+                  {overview.metaHref ? (
+                    <a
+                      href={overview.metaHref}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="button-secondary-premium justify-center gap-2 text-sm"
+                    >
+                      Open metadata
+                      <ExternalLink className="size-4" />
+                    </a>
                   ) : null}
                 </div>
-              ))}
-            </div>
-
-            <div className="mt-5 flex items-center justify-center gap-2 rounded-[1.25rem] border border-border/70 bg-background/55 px-4 py-4 text-center text-sm text-muted-foreground">
-              <Lock className="size-4 text-primary" />
-              <span>Vote submitted</span>
-            </div>
-
-            <div className="mt-5 grid gap-3">
-              <a
-                href={overview.explorerHref}
-                target="_blank"
-                rel="noreferrer"
-                className="button-primary-premium justify-center gap-2 text-sm"
-              >
-                View on Solana Explorer
-                <ExternalLink className="size-4" />
-              </a>
-              {overview.metaHref ? (
-                <a
-                  href={overview.metaHref}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="button-secondary-premium justify-center gap-2 text-sm"
-                >
-                  Open metadata
-                  <ExternalLink className="size-4" />
-                </a>
-              ) : null}
-            </div>
+              </>
+            )}
           </section>
 
           <section className="glass-panel rounded-[1.85rem] p-5 sm:p-6">
@@ -946,18 +993,6 @@ export function PollDetailClient({ pollIdStr }: Props) {
           nowUnix() < overview.votingStart && (
             <CommitPanel pollId={pid} program={program} onDone={load} />
           )}
-
-        {publicKey && program && overview.phase === "voting" && (
-          <VotePanel
-            kind={overview.kind}
-            accessMode={overview.accessMode}
-            pollId={pid}
-            candidates={overview.candidates}
-            program={program}
-            publicKey={publicKey}
-            onDone={load}
-          />
-        )}
       </div>
     </div>
   );
@@ -1324,7 +1359,7 @@ function CommitPanel({
   );
 }
 
-function VotePanel({
+function InlinVotePanel({
   kind,
   accessMode,
   pollId,
@@ -1346,6 +1381,7 @@ function VotePanel({
   const [score, setScore] = useState(3);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
 
   useEffect(() => {
     setSel(candidates[0]?.cid ?? "");
@@ -1369,114 +1405,131 @@ function VotePanel({
     return proof.map((p) => [...p]);
   }
 
-  async function voteNormal() {
+  async function handleSubmit() {
     setBusy(true);
     setNote(null);
     try {
       const cid = new BN(sel);
       const proof = await proofForWallet();
-      await program.methods
-        .vote(pollId, cid, proof)
-        .accountsPartial({
-          user: publicKey,
-          poll: pollPda(programId, pollId),
-          candidate: candidatePda(programId, pollId, cid),
-          voter: voterPda(programId, pollId, publicKey),
-        })
-        .rpc();
-      setNote("Vote recorded.");
+      if (kind === "normal") {
+        await program.methods
+          .vote(pollId, cid, proof)
+          .accountsPartial({
+            user: publicKey,
+            poll: pollPda(programId, pollId),
+            candidate: candidatePda(programId, pollId, cid),
+            voter: voterPda(programId, pollId, publicKey),
+          })
+          .rpc();
+      } else {
+        await program.methods
+          .rateCandidate(pollId, cid, score, proof)
+          .accountsPartial({
+            user: publicKey,
+            poll: pollPda(programId, pollId),
+            candidate: candidatePda(programId, pollId, cid),
+            rater: raterPda(programId, pollId, publicKey),
+            ratingResult: ratingResultPda(programId, pollId, cid),
+          })
+          .rpc();
+      }
+      setSubmitted(true);
       onDone();
     } catch (e) {
-      setNote(e instanceof Error ? e.message : "Vote failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function voteRate() {
-    setBusy(true);
-    setNote(null);
-    try {
-      const cid = new BN(sel);
-      const proof = await proofForWallet();
-      await program.methods
-        .rateCandidate(pollId, cid, score, proof)
-        .accountsPartial({
-          user: publicKey,
-          poll: pollPda(programId, pollId),
-          candidate: candidatePda(programId, pollId, cid),
-          rater: raterPda(programId, pollId, publicKey),
-          ratingResult: ratingResultPda(programId, pollId, cid),
-        })
-        .rpc();
-      setNote("Rating submitted.");
-      onDone();
-    } catch (e) {
-      setNote(e instanceof Error ? e.message : "Rating failed");
+      const msg = e instanceof Error ? e.message : "Submission failed";
+      // "already processed" means the tx landed — treat as success
+      if (
+        msg.includes("already been processed") ||
+        msg.includes("AlreadyInUse") ||
+        msg.includes("already voted") ||
+        msg.includes("already rated")
+      ) {
+        setSubmitted(true);
+        onDone();
+      } else {
+        setNote(msg);
+      }
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <section className="glass-panel rounded-[1.75rem] p-5">
-      <h3 className="font-semibold">Vote</h3>
+    <div>
+      <h3 className="font-semibold text-foreground">
+        {kind === "rating" ? "Rate a candidate" : "Cast your vote"}
+      </h3>
       <p className="mt-1 text-sm text-muted-foreground">
-        Merkle proofs are built from the invite registration list.
+        Select an option and submit. Your vote is final.
       </p>
-      <label className="mt-3 block text-sm">
-        Candidate
-        <select
-          className="input-premium mt-2"
-          value={sel}
-          onChange={(e) => setSel(e.target.value)}
-        >
-          {candidates.map((c) => (
-            <option key={c.cid} value={c.cid}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      {kind === "rating" && (
-        <label className="mt-3 block text-sm">
-          Score (1–5)
-          <input
-            type="range"
-            min={1}
-            max={5}
-            value={score}
-            onChange={(e) => setScore(Number(e.target.value))}
-            className="ml-2 accent-primary"
-          />
-          <span className="ml-2">{score}</span>
-        </label>
-      )}
-      {note && <p className="mt-2 text-sm">{note}</p>}
-      <div className="mt-3 flex gap-2">
-        {kind === "normal" ? (
-          <button
-            type="button"
-            disabled={busy}
-            className="button-primary-premium"
-            onClick={voteNormal}
+
+      <div className="mt-4 space-y-2">
+        {candidates.map((c) => (
+          <label
+            key={c.cid}
+            className={`flex cursor-pointer items-center gap-3 rounded-[1.1rem] border px-4 py-3 transition-colors ${
+              sel === c.cid
+                ? "border-primary/60 bg-primary/10"
+                : "border-border/60 bg-background/40 hover:border-border hover:bg-background/70"
+            }`}
           >
-            Submit vote
-          </button>
-        ) : (
-          <button
-            type="button"
-            disabled={busy}
-            className="button-primary-premium"
-            onClick={voteRate}
-          >
-            Submit rating
-          </button>
-        )}
-        <Link href="/polls" className="button-secondary-premium text-sm">
-          All polls
-        </Link>
+            <input
+              type="radio"
+              name={`vote-${pollId.toString()}`}
+              value={c.cid}
+              checked={sel === c.cid}
+              onChange={() => setSel(c.cid)}
+              disabled={submitted || busy}
+              className="accent-primary"
+            />
+            <span className="font-medium text-foreground">{c.name}</span>
+          </label>
+        ))}
       </div>
-    </section>
+
+      {kind === "rating" && (
+        <div className="mt-4">
+          <label className="block text-sm text-muted-foreground">
+            Score (1–5)
+          </label>
+          <div className="mt-2 flex items-center gap-3">
+            <input
+              type="range"
+              min={1}
+              max={5}
+              value={score}
+              onChange={(e) => setScore(Number(e.target.value))}
+              disabled={submitted || busy}
+              className="flex-1 accent-primary"
+            />
+            <span className="w-6 text-center font-semibold text-foreground">
+              {score}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {note && <p className="mt-3 text-sm text-destructive">{note}</p>}
+
+      <button
+        type="button"
+        disabled={busy || submitted}
+        onClick={handleSubmit}
+        className="button-primary-premium mt-4 w-full justify-center gap-2"
+      >
+        {submitted ? (
+          <>
+            <Lock className="size-4" />
+            {kind === "rating" ? "Rating submitted" : "Vote submitted"}
+          </>
+        ) : busy ? (
+          "Submitting…"
+        ) : kind === "rating" ? (
+          "Submit rating"
+        ) : (
+          "Submit vote"
+        )}
+      </button>
+    </div>
   );
 }
