@@ -134,9 +134,7 @@ export function PollsListClient() {
 
     (async () => {
       try {
-        const res = await fetch("/api/polls/overview", {
-          cache: "no-store",
-        });
+        const res = await fetch("/api/polls/overview");
         const data = (await res.json()) as {
           rows?: PollRow[];
           error?: string;
@@ -159,8 +157,16 @@ export function PollsListClient() {
 
   if (loading) {
     return (
-      <div className="glass-panel rounded-[1.75rem] px-5 py-8 text-muted-foreground">
-        Loading polls…
+      <div className="space-y-3">
+        {[...Array(4)].map((_, i) => (
+          <div
+            key={i}
+            className="glass-panel animate-pulse rounded-[1.75rem] px-5 py-6"
+          >
+            <div className="mb-3 h-4 w-2/5 rounded-full bg-muted/50" />
+            <div className="h-3 w-1/4 rounded-full bg-muted/30" />
+          </div>
+        ))}
       </div>
     );
   }

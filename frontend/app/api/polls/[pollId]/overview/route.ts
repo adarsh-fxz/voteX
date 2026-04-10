@@ -52,7 +52,13 @@ const PUBLIC_HTTP: Record<string, string> = {
   testnet: "https://api.testnet.solana.com",
 };
 
-const detailCache = new Map<string, { expiresAt: number; payload: DetailOverview }>();
+const CACHE_TTL_MS = 60_000;
+const STALE_TTL_MS = 120_000;
+
+const detailCache = new Map<
+  string,
+  { expiresAt: number; payload: DetailOverview }
+>();
 const detailInflight = new Map<string, Promise<DetailOverview>>();
 const metadataCache = new Map<
   string,
@@ -108,7 +114,8 @@ async function readMetadata(metadataUri: string | null | undefined) {
 async function buildDetailOverview(pollId: string): Promise<DetailOverview> {
   const pollIdBn = new BN(pollId);
   const poll = await retryRpcRead(
-    () => readonlyProgram.account.poll.fetch(pollPda(votexProgramId(), pollIdBn)),
+    () =>
+      readonlyProgram.account.poll.fetch(pollPda(votexProgramId(), pollIdBn)),
     { attempts: 5, baseDelayMs: 400 },
   );
 
@@ -121,7 +128,8 @@ async function buildDetailOverview(pollId: string): Promise<DetailOverview> {
   ]);
 
   const kind = "rating" in poll.kind ? "rating" : "normal";
-  const accessMode = "merkleRestricted" in poll.accessMode ? "merkleRestricted" : "open";
+  const accessMode =
+    "merkleRestricted" in poll.accessMode ? "merkleRestricted" : "open";
 
   let candidates = candidatesForPoll
     .map((candidate) => ({
@@ -153,7 +161,10 @@ async function buildDetailOverview(pollId: string): Promise<DetailOverview> {
       .sort((a, b) => b.votes - a.votes);
   }
 
-  const totalVotes = candidates.reduce((sum, candidate) => sum + candidate.votes, 0);
+  const totalVotes = candidates.reduce(
+    (sum, candidate) => sum + candidate.votes,
+    0,
+  );
   const cluster = process.env.NEXT_PUBLIC_SOLANA_CLUSTER ?? "devnet";
   const clusterParam = cluster === "mainnet-beta" ? "" : `?cluster=${cluster}`;
   const explorerHref = `https://explorer.solana.com/address/${pollPda(
@@ -186,37 +197,63 @@ async function buildDetailOverview(pollId: string): Promise<DetailOverview> {
   };
 }
 
+function scheduleDetailRefresh(pollId: string) {
+  if (detailInflight.has(pollId)) return;
+  detailInflight.set(
+    pollId,
+    buildDetailOverview(pollId)
+      .then((payload) => {
+        detailCache.set(pollId, {
+          expiresAt: Date.now() + CACHE_TTL_MS,
+          payload,
+        });
+        return payload;
+      })
+      .finally(() => {
+        detailInflight.delete(pollId);
+      }),
+  );
+}
+
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ pollId: string }> },
 ) {
   const { pollId } = await params;
+  const now = Date.now();
 
   const cached = detailCache.get(pollId);
-  if (cached && cached.expiresAt > Date.now()) {
-    return NextResponse.json(cached.payload);
+  if (cached) {
+    const isExpired = cached.expiresAt <= now;
+    const isStale = cached.expiresAt + STALE_TTL_MS > now;
+
+    if (!isExpired) {
+      return NextResponse.json(cached.payload, {
+        headers: {
+          "Cache-Control": "public, s-maxage=15, stale-while-revalidate=60",
+        },
+      });
+    }
+
+    if (isStale) {
+      scheduleDetailRefresh(pollId);
+      return NextResponse.json(cached.payload, {
+        headers: {
+          "Cache-Control": "public, s-maxage=15, stale-while-revalidate=60",
+        },
+      });
+    }
   }
 
-  if (!detailInflight.has(pollId)) {
-    detailInflight.set(
-      pollId,
-      buildDetailOverview(pollId)
-        .then((payload) => {
-          detailCache.set(pollId, {
-            expiresAt: Date.now() + 15_000,
-            payload,
-          });
-          return payload;
-        })
-        .finally(() => {
-          detailInflight.delete(pollId);
-        }),
-    );
-  }
+  scheduleDetailRefresh(pollId);
 
   try {
     const payload = await detailInflight.get(pollId);
-    return NextResponse.json(payload);
+    return NextResponse.json(payload, {
+      headers: {
+        "Cache-Control": "public, s-maxage=15, stale-while-revalidate=60",
+      },
+    });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to load poll overview";

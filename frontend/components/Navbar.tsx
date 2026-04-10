@@ -19,8 +19,8 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { APP_NAME } from "@/lib/constants";
 
 const links = [
-  { href: "#features", label: "Features" },
   { href: "#flow", label: "How it works" },
+  { href: "#features", label: "Features" },
   { href: "/polls", label: "Polls" },
   { href: "/create", label: "Create poll" },
 ] as const;
@@ -60,7 +60,11 @@ export function Navbar() {
       <div className="mx-auto max-w-7xl">
         <div className="glass-panel relative flex min-h-16 items-center justify-between rounded-full px-3 py-2 sm:px-4">
           <div className="flex items-center gap-3">
-            <Link href="/" className="flex items-center gap-3">
+            <Link
+              href="/"
+              className="flex items-center gap-3"
+              onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+            >
               <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,rgba(56,189,248,0.9),rgba(45,212,191,0.9))] text-white shadow-[0_18px_40px_-26px_rgba(45,212,191,0.9)]">
                 <Vote className="size-5" />
               </div>

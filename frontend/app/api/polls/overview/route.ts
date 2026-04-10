@@ -47,6 +47,9 @@ let overviewCache: CachedOverview | null = null;
 let overviewInflight: Promise<PollOverviewItem[]> | null = null;
 const metadataCache = new Map<string, { expiresAt: number; title: string }>();
 
+const CACHE_TTL_MS = 60_000; // serve cached data for 60s
+const STALE_TTL_MS = 120_000; // background-refresh up to 2 min after expiry
+
 function gpaFriendlyRpcUrl(): string {
   return (
     process.env.SOLANA_RPC_GPA_URL ??
@@ -90,26 +93,24 @@ async function readMetadataTitle(
 }
 
 async function buildOverview(): Promise<PollOverviewItem[]> {
-  const polls = await retryRpcRead(() => readonlyProgram.account.poll.all(), {
-    attempts: 5,
-    baseDelayMs: 400,
-  });
-
-  const candidates = await retryRpcRead(
-    () => readonlyProgram.account.candidate.all(),
-    {
+  // Fire all three GPA scans in parallel instead of sequentially
+  const [polls, candidates, ratingResultsMaybe] = await Promise.all([
+    retryRpcRead(() => readonlyProgram.account.poll.all(), {
       attempts: 5,
       baseDelayMs: 400,
-    },
-  );
+    }),
+    retryRpcRead(() => readonlyProgram.account.candidate.all(), {
+      attempts: 5,
+      baseDelayMs: 400,
+    }),
+    retryRpcRead(() => readonlyProgram.account.ratingResult.all(), {
+      attempts: 5,
+      baseDelayMs: 400,
+    }),
+  ]);
 
   const hasRatingPoll = polls.some((poll) => "rating" in poll.account.kind);
-  const ratingResults = hasRatingPoll
-    ? await retryRpcRead(() => readonlyProgram.account.ratingResult.all(), {
-        attempts: 5,
-        baseDelayMs: 400,
-      })
-    : [];
+  const ratingResults = hasRatingPoll ? ratingResultsMaybe : [];
 
   const ratingCounts = new Map<string, number>();
   for (const ratingResult of ratingResults) {
@@ -171,7 +172,10 @@ async function buildOverview(): Promise<PollOverviewItem[]> {
           .sort((a, b) => b.value - a.value);
 
         const totalVotes =
-          candidateValues.reduce((sum, candidate) => sum + candidate.value, 0) || 0;
+          candidateValues.reduce(
+            (sum, candidate) => sum + candidate.value,
+            0,
+          ) || 0;
 
         return {
           id,
@@ -195,28 +199,65 @@ async function buildOverview(): Promise<PollOverviewItem[]> {
   return overview;
 }
 
+function scheduleRefresh() {
+  if (overviewInflight) return;
+  overviewInflight = buildOverview()
+    .then((payload) => {
+      overviewCache = { expiresAt: Date.now() + CACHE_TTL_MS, payload };
+      return payload;
+    })
+    .finally(() => {
+      overviewInflight = null;
+    });
+}
+
 export async function GET() {
-  if (overviewCache && overviewCache.expiresAt > Date.now()) {
-    return NextResponse.json({ rows: overviewCache.payload });
+  const now = Date.now();
+
+  // Serve stale data immediately while a background refresh runs
+  if (overviewCache) {
+    const isExpired = overviewCache.expiresAt <= now;
+    const isStale = overviewCache.expiresAt + STALE_TTL_MS > now;
+
+    if (!isExpired) {
+      // Fresh — return immediately with cache headers
+      return NextResponse.json(
+        { rows: overviewCache.payload },
+        {
+          headers: {
+            "Cache-Control": `public, s-maxage=15, stale-while-revalidate=60`,
+          },
+        },
+      );
+    }
+
+    if (isStale) {
+      // Stale but within revalidation window — return stale data and refresh in background
+      scheduleRefresh();
+      return NextResponse.json(
+        { rows: overviewCache.payload },
+        {
+          headers: {
+            "Cache-Control": `public, s-maxage=15, stale-while-revalidate=60`,
+          },
+        },
+      );
+    }
   }
 
-  if (!overviewInflight) {
-    overviewInflight = buildOverview()
-      .then((payload) => {
-        overviewCache = {
-          expiresAt: Date.now() + 15_000,
-          payload,
-        };
-        return payload;
-      })
-      .finally(() => {
-        overviewInflight = null;
-      });
-  }
+  // No cache or too old — wait for a fresh fetch
+  scheduleRefresh();
 
   try {
-    const payload = await overviewInflight;
-    return NextResponse.json({ rows: payload });
+    const payload = await overviewInflight!;
+    return NextResponse.json(
+      { rows: payload },
+      {
+        headers: {
+          "Cache-Control": `public, s-maxage=15, stale-while-revalidate=60`,
+        },
+      },
+    );
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to load poll overview";

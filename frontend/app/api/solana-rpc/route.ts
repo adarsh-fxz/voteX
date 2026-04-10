@@ -132,39 +132,43 @@ export async function POST(req: Request) {
       });
     }
 
-    const results: unknown[] = [];
-    for (const single of parsed) {
-      const method = rpcMethodFromPayload(single);
-      const endpoint = pickUpstream(method, primary);
-      const one = JSON.stringify(single);
-      const { status, text } = await fetchUpstreamWithRetry(endpoint, one, method);
-      if (process.env.NODE_ENV === "development" && status !== 200) {
-        console.warn(
-          `[solana-rpc] batch item upstream ${status} method=${method ?? "?"} endpoint=${endpoint.slice(0, 48)}…`,
-          text.slice(0, 200),
+    const results = await Promise.all(
+      parsed.map(async (single) => {
+        const method = rpcMethodFromPayload(single);
+        const endpoint = pickUpstream(method, primary);
+        const one = JSON.stringify(single);
+        const { status, text } = await fetchUpstreamWithRetry(
+          endpoint,
+          one,
+          method,
         );
-      }
-      try {
-        const j = JSON.parse(text) as { jsonrpc?: string };
-        if (j && j.jsonrpc === "2.0") {
-          results.push(j);
-          continue;
+        if (process.env.NODE_ENV === "development" && status !== 200) {
+          console.warn(
+            `[solana-rpc] batch item upstream ${status} method=${method ?? "?"} endpoint=${endpoint.slice(0, 48)}…`,
+            text.slice(0, 200),
+          );
         }
-      } catch {
-        /* fall through */
-      }
-      results.push({
-        jsonrpc: "2.0",
-        id:
-          typeof single === "object" && single !== null && "id" in single
-            ? (single as { id: unknown }).id
-            : null,
-        error: {
-          code: -32603,
-          message: `Upstream HTTP ${status}: ${text.slice(0, 200)}`,
-        },
-      });
-    }
+        try {
+          const j = JSON.parse(text) as { jsonrpc?: string };
+          if (j && j.jsonrpc === "2.0") {
+            return j;
+          }
+        } catch {
+          /* fall through */
+        }
+        return {
+          jsonrpc: "2.0",
+          id:
+            typeof single === "object" && single !== null && "id" in single
+              ? (single as { id: unknown }).id
+              : null,
+          error: {
+            code: -32603,
+            message: `Upstream HTTP ${status}: ${text.slice(0, 200)}`,
+          },
+        };
+      }),
+    );
 
     return new NextResponse(JSON.stringify(results), {
       status: 200,
@@ -194,7 +198,7 @@ export async function POST(req: Request) {
 
   if (cacheKey && status === 200 && !isJsonRpcRateLimitPayload(text)) {
     responseCache.set(cacheKey, {
-      expiresAt: Date.now() + 10_000,
+      expiresAt: Date.now() + 30_000,
       payload: text,
     });
   }

@@ -198,7 +198,10 @@ const DonutResultsChart = dynamic(
                   borderRadius: "0.75rem",
                   fontSize: 13,
                   padding: "8px 12px",
+                  color: "#22c55e",
                 }}
+                itemStyle={{ color: "#22c55e" }}
+                labelStyle={{ color: "#22c55e" }}
                 formatter={(value: number, name: string) => [
                   `${Math.round(value)}%`,
                   name,
@@ -332,8 +335,7 @@ function buildTimeSeries(
       : Math.max(votingStart, nowSec - windowSec);
 
   const windowSpan = Math.max(nowSec - windowStart, 1);
-  const showClock =
-    timeFilter !== "All" || totalSpan <= 7 * 86400;
+  const showClock = timeFilter !== "All" || totalSpan <= 7 * 86400;
   const dateFmt = new Intl.DateTimeFormat(undefined, {
     month: "short",
     day: "numeric",
@@ -592,6 +594,7 @@ export function PollDetailClient({ pollIdStr }: Props) {
   const [loading, setLoading] = useState(true);
   const [votedOptionLabel, setVotedOptionLabel] = useState<string | null>(null);
   const [hasVoted, setHasVoted] = useState(false);
+  const [votedStatusLoading, setVotedStatusLoading] = useState(false);
 
   const pid = useMemo(() => new BN(pollIdStr), [pollIdStr]);
   const loadGenRef = useRef(0);
@@ -601,9 +604,7 @@ export function PollDetailClient({ pollIdStr }: Props) {
     setErr(null);
     setLoading(true);
     try {
-      const res = await fetch(`/api/polls/${pollIdStr}/overview`, {
-        cache: "no-store",
-      });
+      const res = await fetch(`/api/polls/${pollIdStr}/overview`);
       const data = (await res.json()) as PollOverview & { error?: string };
       if (!res.ok) {
         throw new Error(data.error ?? "Failed to load poll");
@@ -627,6 +628,10 @@ export function PollDetailClient({ pollIdStr }: Props) {
 
   useEffect(() => {
     let alive = true;
+
+    if (program && publicKey && overview) {
+      setVotedStatusLoading(true);
+    }
 
     async function loadVotedOption() {
       if (!program || !publicKey || !overview) {
@@ -666,6 +671,8 @@ export function PollDetailClient({ pollIdStr }: Props) {
           setVotedOptionLabel(null);
           setHasVoted(false);
         }
+      } finally {
+        if (alive) setVotedStatusLoading(false);
       }
     }
 
@@ -709,10 +716,15 @@ export function PollDetailClient({ pollIdStr }: Props) {
                   {overview.title}
                 </h2>
                 <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-                  <span className="inline-flex items-center gap-2">
+                  <a
+                    href={`https://explorer.solana.com/address/${overview.creator}${SOLANA_CLUSTER_LABEL === "mainnet-beta" ? "" : `?cluster=${SOLANA_CLUSTER_LABEL}`}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-2 transition hover:text-foreground"
+                  >
                     <ShieldCheck className="size-4 text-primary" />
                     {overview.creator.slice(0, 8)}…{overview.creator.slice(-6)}
-                  </span>
+                  </a>
                   <span className="inline-flex items-center gap-2">
                     <Clock3 className="size-4 text-primary" />
                     {overview.phase === "voting"
@@ -844,7 +856,8 @@ export function PollDetailClient({ pollIdStr }: Props) {
             {publicKey &&
             program &&
             overview.phase === "voting" &&
-            !hasVoted ? (
+            !hasVoted &&
+            !votedStatusLoading ? (
               <InlinVotePanel
                 kind={overview.kind}
                 accessMode={overview.accessMode}
@@ -878,37 +891,44 @@ export function PollDetailClient({ pollIdStr }: Props) {
                 )}
 
                 <div className="space-y-3">
-                  {overview.candidates.map((candidate, index) => (
-                    <div
-                      key={candidate.cid}
-                      className={`rounded-[1.25rem] border px-4 py-3 ${
-                        index === 0
-                          ? "border-violet-500/40 bg-violet-500/8"
-                          : index === 1
-                            ? "border-rose-500/30 bg-rose-500/6"
-                            : "border-emerald-500/25 bg-emerald-500/6"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="font-medium text-foreground">
-                          {candidate.name}
-                        </span>
-                        <span className="text-lg font-semibold text-foreground">
-                          {overview.kind === "rating"
-                            ? candidate.avgScore !== null
-                              ? `${candidate.avgScore.toFixed(1)}/5`
-                              : "0.0/5"
-                            : formatPercent(candidate.percent)}
-                        </span>
+                  {overview.candidates.map((candidate, index) => {
+                    const color =
+                      CANDIDATE_COLORS[index % CANDIDATE_COLORS.length];
+                    return (
+                      <div
+                        key={candidate.cid}
+                        className="rounded-[1.25rem] border px-4 py-3"
+                        style={{
+                          borderColor: `${color}55`,
+                          backgroundColor: `${color}0d`,
+                        }}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2.5">
+                            <span className="font-medium text-foreground">
+                              {candidate.name}
+                            </span>
+                          </div>
+                          <span
+                            className="text-lg font-semibold"
+                            style={{ color }}
+                          >
+                            {overview.kind === "rating"
+                              ? candidate.avgScore !== null
+                                ? `${candidate.avgScore.toFixed(1)}/5`
+                                : "0.0/5"
+                              : formatPercent(candidate.percent)}
+                          </span>
+                        </div>
+                        {overview.kind === "rating" ? (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {candidate.votes} rating
+                            {candidate.votes === 1 ? "" : "s"}
+                          </p>
+                        ) : null}
                       </div>
-                      {overview.kind === "rating" ? (
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {candidate.votes} rating
-                          {candidate.votes === 1 ? "" : "s"}
-                        </p>
-                      ) : null}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 {hasVoted && (
@@ -1391,7 +1411,13 @@ function InlinVotePanel({
   kind: "normal" | "rating";
   accessMode: "open" | "merkleRestricted";
   pollId: BN;
-  candidates: Array<{ cid: string; name: string; votes: number }>;
+  candidates: Array<{
+    cid: string;
+    name: string;
+    votes: number;
+    percent: number;
+    avgScore: number | null;
+  }>;
   program: NonNullable<ReturnType<typeof useVotexProgram>["program"]>;
   publicKey: PublicKey;
   onDone: () => void;
@@ -1484,27 +1510,40 @@ function InlinVotePanel({
       </p>
 
       <div className="mt-4 space-y-2">
-        {candidates.map((c) => (
-          <label
-            key={c.cid}
-            className={`flex cursor-pointer items-center gap-3 rounded-[1.1rem] border px-4 py-3 transition-colors ${
-              sel === c.cid
-                ? "border-primary/60 bg-primary/10"
-                : "border-border/60 bg-background/40 hover:border-border hover:bg-background/70"
-            }`}
-          >
-            <input
-              type="radio"
-              name={`vote-${pollId.toString()}`}
-              value={c.cid}
-              checked={sel === c.cid}
-              onChange={() => setSel(c.cid)}
-              disabled={submitted || busy}
-              className="accent-primary"
-            />
-            <span className="font-medium text-foreground">{c.name}</span>
-          </label>
-        ))}
+        {candidates.map((c, index) => {
+          const color = CANDIDATE_COLORS[index % CANDIDATE_COLORS.length];
+          const isSelected = sel === c.cid;
+          return (
+            <label
+              key={c.cid}
+              className="flex cursor-pointer items-center gap-3 rounded-[1.1rem] border px-4 py-3 transition-colors"
+              style={{
+                borderColor: isSelected ? `${color}99` : `${color}44`,
+                backgroundColor: isSelected ? `${color}1a` : `${color}0d`,
+              }}
+            >
+              <input
+                type="radio"
+                name={`vote-${pollId.toString()}`}
+                value={c.cid}
+                checked={isSelected}
+                onChange={() => setSel(c.cid)}
+                disabled={submitted || busy}
+                className="accent-primary"
+              />
+              <span className="flex-1 font-medium text-foreground">
+                {c.name}
+              </span>
+              <span className="text-sm font-semibold" style={{ color }}>
+                {kind === "rating"
+                  ? c.avgScore !== null
+                    ? `${c.avgScore.toFixed(1)}/5`
+                    : "0.0/5"
+                  : formatPercent(c.percent)}
+              </span>
+            </label>
+          );
+        })}
       </div>
 
       {kind === "rating" && (
