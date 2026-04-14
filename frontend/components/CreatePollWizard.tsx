@@ -1,7 +1,8 @@
 "use client";
 
-import { useWallet } from "@solana/wallet-adapter-react";
+import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import BN from "bn.js";
+import { Connection, SendTransactionError } from "@solana/web3.js";
 import {
   ArrowLeft,
   ArrowRight,
@@ -43,6 +44,23 @@ const steps = [
 
 const minuteMs = 60 * 1000;
 
+async function formatSolanaTxError(
+  e: unknown,
+  connection: Connection,
+): Promise<string> {
+  if (e instanceof SendTransactionError) {
+    let msg = e.message;
+    try {
+      const logs = await e.getLogs(connection);
+      if (logs?.length) msg += `\n\n${logs.join("\n")}`;
+    } catch {
+      /* log fetch is best-effort */
+    }
+    return msg;
+  }
+  return e instanceof Error ? e.message : "Failed";
+}
+
 function toDateTimeLocalValue(date: Date) {
   const pad = (v: number) => String(v).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
@@ -75,11 +93,13 @@ function Label({
 
 export function CreatePollWizard() {
   const router = useRouter();
+  const { connection } = useConnection();
   const { publicKey } = useWallet();
   const { program } = useVotexProgram();
   const [step, setStep] = useState<Step>(1);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const submitLockRef = useRef(false);
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -242,6 +262,8 @@ export function CreatePollWizard() {
   async function onSubmit() {
     setErr(null);
     if (!validateStep(4)) return;
+    if (submitLockRef.current) return;
+    submitLockRef.current = true;
     setLoading(true);
     try {
       if (!program || !publicKey) throw new Error("Connect wallet");
@@ -283,20 +305,19 @@ export function CreatePollWizard() {
       if (names.length < 2) throw new Error("Add at least two candidates");
 
       const pollIdBn = nextPid;
-      for (const name of names) {
+      // PDAs use sequential candidate ids 1..N (matches on-chain `(poll.candidates + 1)` seeds).
+      for (let i = 0; i < names.length; i++) {
+        const name = names[i];
         if (name.length > 32)
           throw new Error(`Name too long (max 32): ${name}`);
-        const pollAcc = await program.account.poll.fetch(
-          pollPda(pid, pollIdBn),
-        );
-        const cid = pollAcc.candidates.add(new BN(1));
+        const cidBn = new BN(i + 1);
         await program.methods
           .registerCandidate(pollIdBn, name)
           .accountsPartial({
             user: publicKey,
             poll: pollPda(pid, pollIdBn),
-            candidate: candidatePda(pid, pollIdBn, cid),
-            ratingResult: ratingResultPda(pid, pollIdBn, cid),
+            candidate: candidatePda(pid, pollIdBn, cidBn),
+            ratingResult: ratingResultPda(pid, pollIdBn, cidBn),
             registrations: registrationsPda(pid),
           })
           .rpc();
@@ -304,8 +325,13 @@ export function CreatePollWizard() {
 
       router.push(`/poll/${pollIdBn.toString()}`);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Failed");
+      const msg = await formatSolanaTxError(e, connection);
+      const hint =
+        /already been processed/i.test(msg) &&
+        "\n\nIf you clicked Create twice or retried quickly, the first transaction may have succeeded—check the poll on-chain before trying again.";
+      setErr(msg + (hint || ""));
     } finally {
+      submitLockRef.current = false;
       setLoading(false);
     }
   }

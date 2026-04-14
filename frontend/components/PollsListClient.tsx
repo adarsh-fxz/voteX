@@ -323,7 +323,7 @@ export function PollsListClient() {
                       <div className="space-y-2">
                         {row.candidates.map((candidate, index) => (
                           <div
-                            key={`${row.id}-${candidate.name}`}
+                            key={`${row.id}-${candidate.name}-${index}`}
                             className="flex items-center justify-between gap-3 rounded-2xl bg-white/50 px-3 py-3 dark:bg-slate-900/40"
                           >
                             <div className="min-w-0">
