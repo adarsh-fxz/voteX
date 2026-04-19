@@ -1132,12 +1132,11 @@ export function PollDetailClient({ pollIdStr }: Props) {
                               : formatPercent(candidate.percent)}
                           </span>
                         </div>
-                        {overview.kind === "rating" ? (
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {candidate.votes} rating
-                            {candidate.votes === 1 ? "" : "s"}
-                          </p>
-                        ) : null}
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {candidate.votes}{" "}
+                          {overview.kind === "rating" ? "rating" : "vote"}
+                          {candidate.votes === 1 ? "" : "s"}
+                        </p>
                       </div>
                     );
                   })}
@@ -1876,12 +1875,18 @@ function InlinVotePanel({
                   </span>
                 )}
               </span>
-              <span className="text-sm font-semibold" style={{ color }}>
-                {kind === "rating"
-                  ? c.avgScore !== null
-                    ? `${c.avgScore.toFixed(1)}/5`
-                    : "0.0/5"
-                  : formatPercent(c.percent)}
+              <span className="flex flex-col items-end text-right leading-tight">
+                <span className="text-sm font-semibold" style={{ color }}>
+                  {kind === "rating"
+                    ? c.avgScore !== null
+                      ? `${c.avgScore.toFixed(1)}/5`
+                      : "0.0/5"
+                    : formatPercent(c.percent)}
+                </span>
+                <span className="mt-0.5 text-[11px] text-muted-foreground">
+                  {c.votes} {kind === "rating" ? "rating" : "vote"}
+                  {c.votes === 1 ? "" : "s"}
+                </span>
               </span>
             </label>
           );
