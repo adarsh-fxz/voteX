@@ -1,4 +1,5 @@
 [toolchain]
+anchor_version = "0.32.1"
 package_manager = "yarn"
 
 [features]
@@ -6,10 +7,7 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-votex = "4HK16g4y8MftrLKsvmFCARkAENNkHfpE5zqBn7Voezwo"
-
-[registry]
-url = "https://api.apr.dev"
+votex = "HFGLGj86P9gnjLVWnfvoWGjViiEFfwfdQYUtVJ131ZpH"
 
 [provider]
 cluster = "devnet"

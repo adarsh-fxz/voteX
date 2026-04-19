@@ -11,7 +11,7 @@ use instructions::*;
 #[allow(unused_imports)]
 use states::*;
 
-declare_id!("4HK16g4y8MftrLKsvmFCARkAENNkHfpE5zqBn7Voezwo");
+declare_id!("HFGLGj86P9gnjLVWnfvoWGjViiEFfwfdQYUtVJ131ZpH");
 
 #[program]
 pub mod votex {

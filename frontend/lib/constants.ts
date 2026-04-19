@@ -62,7 +62,7 @@ export function shouldUseRpcHttpProxy(): boolean {
 
 export const VOTEX_PROGRAM_ID =
   process.env.NEXT_PUBLIC_VOTEX_PROGRAM_ID ??
-  "4HK16g4y8MftrLKsvmFCARkAENNkHfpE5zqBn7Voezwo";
+  "HFGLGj86P9gnjLVWnfvoWGjViiEFfwfdQYUtVJ131ZpH";
 
 export const APP_NAME = "VoteX";
 

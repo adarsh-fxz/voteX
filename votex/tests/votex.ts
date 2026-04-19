@@ -104,8 +104,17 @@ describe("voteX", () => {
     };
   }
 
-  // Shared time helpers
-  const now = () => Math.floor(Date.now() / 1000);
+  // Shared time helpers: use chain time so test windows match on-chain Clock.
+  const now = async () => {
+    try {
+      const slot = await provider.connection.getSlot("confirmed");
+      const blockTime = await provider.connection.getBlockTime(slot);
+      if (blockTime !== null) return blockTime;
+    } catch {
+      // Fall through to local wall clock if block time is temporarily unavailable.
+    }
+    return Math.floor(Date.now() / 1000);
+  };
 
   // Initialisation
 
@@ -128,7 +137,7 @@ describe("voteX", () => {
     const counter = await program.account.counter.fetch(counterPda);
     const nextPid = counter.count.add(new anchor.BN(1));
     const pda = pollPda(nextPid);
-    const t = now();
+    const t = await now();
     try {
       await program.methods
         .createPoll(
@@ -152,7 +161,7 @@ describe("voteX", () => {
   it("Creates an open normal poll (registration in past, voting active now)", async () => {
     const counter = await program.account.counter.fetch(counterPda);
     PID = counter.count.add(new anchor.BN(1));
-    const t = now();
+    const t = await now();
     await program.methods
       .createPoll(
         new anchor.BN(t - 200), // registration_end in the past
@@ -228,7 +237,7 @@ describe("voteX", () => {
   it("Creates an open rating poll (voting active)", async () => {
     const counter = await program.account.counter.fetch(counterPda);
     RATING_PID = counter.count.add(new anchor.BN(1));
-    const t = now();
+    const t = await now();
     await program.methods
       .createPoll(
         new anchor.BN(t - 200),
@@ -385,7 +394,7 @@ describe("voteX", () => {
     // Create a poll with registration_end in the future
     const counter = await program.account.counter.fetch(counterPda);
     const futurePid = counter.count.add(new anchor.BN(1));
-    const t = now();
+    const t = await now();
     await program.methods
       .createPoll(
         new anchor.BN(t + 300), // registration_end in future
@@ -425,7 +434,7 @@ describe("voteX", () => {
   it("Creates and commits a restricted poll (registration closed, before voting_start)", async () => {
     const counter = await program.account.counter.fetch(counterPda);
     RESTRICTED_PID = counter.count.add(new anchor.BN(1));
-    const t = now();
+    const t = await now();
 
     // registration_end in the past, voting_start in the future → commit window is NOW
     await program.methods
@@ -500,7 +509,7 @@ describe("voteX", () => {
   it("Creates a short-lived poll to test close_voter", async () => {
     const counter = await program.account.counter.fetch(counterPda);
     const shortPid = counter.count.add(new anchor.BN(1));
-    const t = now();
+    const t = await now();
     // voting window 1 second so it ends near-immediately
     await program.methods
       .createPoll(
