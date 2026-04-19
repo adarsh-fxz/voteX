@@ -251,6 +251,9 @@ type PollOverview = {
 };
 
 type Props = { pollIdStr: string };
+type WritableVotexProgram = NonNullable<
+  ReturnType<typeof useVotexProgram>["program"]
+>;
 
 const DETAIL_OVERVIEW_TTL_MS = 15_000;
 const detailOverviewCache = new Map<
@@ -258,6 +261,64 @@ const detailOverviewCache = new Map<
   { expiresAt: number; payload: PollOverview }
 >();
 const detailOverviewInflight = new Map<string, Promise<PollOverview>>();
+const RATER_STATE_TTL_MS = 10_000;
+const raterStateCache = new Map<
+  string,
+  { expiresAt: number; payload: { ratedMaskWords: BN[] } | null }
+>();
+const raterStateInflight = new Map<
+  string,
+  Promise<{ ratedMaskWords: BN[] } | null>
+>();
+
+function raterStateKey(programId: PublicKey, pollId: BN, publicKey: PublicKey) {
+  return `${programId.toBase58()}:${pollId.toString()}:${publicKey.toBase58()}`;
+}
+
+function invalidateRaterState(
+  programId: PublicKey,
+  pollId: BN,
+  publicKey: PublicKey,
+) {
+  raterStateCache.delete(raterStateKey(programId, pollId, publicKey));
+}
+
+async function fetchRaterState(
+  program: WritableVotexProgram,
+  programId: PublicKey,
+  pollId: BN,
+  publicKey: PublicKey,
+): Promise<{ ratedMaskWords: BN[] } | null> {
+  const key = raterStateKey(programId, pollId, publicKey);
+  const now = Date.now();
+
+  const cached = raterStateCache.get(key);
+  if (cached && cached.expiresAt > now) {
+    return cached.payload;
+  }
+
+  const inflight = raterStateInflight.get(key);
+  if (inflight) return inflight;
+
+  const request = (async () => {
+    const rater = await program.account.rater.fetchNullable(
+      raterPda(programId, pollId, publicKey),
+    );
+    const payload = rater
+      ? { ratedMaskWords: (rater as unknown as { ratedMask: BN[] }).ratedMask }
+      : null;
+    raterStateCache.set(key, {
+      expiresAt: Date.now() + RATER_STATE_TTL_MS,
+      payload,
+    });
+    return payload;
+  })().finally(() => {
+    raterStateInflight.delete(key);
+  });
+
+  raterStateInflight.set(key, request);
+  return request;
+}
 
 async function fetchPollOverview(pollIdStr: string): Promise<PollOverview> {
   const now = Date.now();
@@ -693,6 +754,7 @@ export function PollDetailClient({ pollIdStr }: Props) {
   const [hasVoted, setHasVoted] = useState(false);
   const [votedStatusLoading, setVotedStatusLoading] = useState(false);
 
+  const programId = useMemo(() => votexProgramId(), []);
   const pid = useMemo(() => new BN(pollIdStr), [pollIdStr]);
   const loadGenRef = useRef(0);
 
@@ -785,7 +847,7 @@ export function PollDetailClient({ pollIdStr }: Props) {
       try {
         if (overview.kind === "normal") {
           const voter = await program.account.voter.fetchNullable(
-            voterPda(votexProgramId(), pid, publicKey),
+            voterPda(programId, pid, publicKey),
           );
           if (!alive) return;
           if (!voter?.hasVoted) {
@@ -800,13 +862,14 @@ export function PollDetailClient({ pollIdStr }: Props) {
           setVotedOptionLabel(pickedCandidate?.name ?? `Option ${votedCid}`);
           setHasVoted(true);
         } else {
-          // rating poll — check rater PDA
-          const rater = await program.account.rater.fetchNullable(
-            raterPda(votexProgramId(), pid, publicKey),
+          const raterState = await fetchRaterState(
+            program,
+            programId,
+            pid,
+            publicKey,
           );
           if (!alive) return;
-          // rater account existing means the user has submitted at least one rating
-          setHasVoted(rater !== null);
+          setHasVoted(raterState !== null);
           setVotedOptionLabel(null);
         }
       } catch {
@@ -824,7 +887,7 @@ export function PollDetailClient({ pollIdStr }: Props) {
     return () => {
       alive = false;
     };
-  }, [program, publicKey, overview, pid, livePhase]);
+  }, [program, programId, publicKey, overview, pid, livePhase]);
 
   if (loading) {
     return (
@@ -1618,8 +1681,11 @@ function InlinVotePanel({
 
       setRatedStateLoading(true);
       try {
-        const rater = await program.account.rater.fetchNullable(
-          raterPda(programId, pollId, publicKey),
+        const rater = await fetchRaterState(
+          program,
+          programId,
+          pollId,
+          publicKey,
         );
         if (!alive) return;
 
@@ -1628,8 +1694,7 @@ function InlinVotePanel({
           return;
         }
 
-        const ratedMaskWords = (rater as unknown as { ratedMask: BN[] })
-          .ratedMask;
+        const ratedMaskWords = rater.ratedMaskWords;
         const nextRated = new Set<string>();
         for (const candidate of candidates) {
           if (isCandidateAlreadyRated(ratedMaskWords, candidate.cid)) {
@@ -1724,6 +1789,7 @@ function InlinVotePanel({
       if (kind === "normal") {
         setSubmitted(true);
       } else {
+        invalidateRaterState(programId, pollId, publicKey);
         setRatedCids((prev) => {
           const next = new Set(prev);
           next.add(sel);
@@ -1747,6 +1813,7 @@ function InlinVotePanel({
         if (kind === "normal") {
           setSubmitted(true);
         } else {
+          invalidateRaterState(programId, pollId, publicKey);
           setRatedCids((prev) => {
             const next = new Set(prev);
             next.add(sel);
