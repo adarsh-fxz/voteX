@@ -320,7 +320,32 @@ async function fetchRaterState(
   return request;
 }
 
-async function fetchPollOverview(pollIdStr: string): Promise<PollOverview> {
+function cachePollOverview(pollIdStr: string, payload: PollOverview) {
+  detailOverviewCache.set(pollIdStr, {
+    expiresAt: Date.now() + DETAIL_OVERVIEW_TTL_MS,
+    payload,
+  });
+}
+
+async function fetchPollOverviewWithOptions(
+  pollIdStr: string,
+  options?: { force?: boolean },
+): Promise<PollOverview> {
+  const force = options?.force ?? false;
+
+  if (force) {
+    const res = await fetch(`/api/polls/${pollIdStr}/overview?fresh=1`, {
+      cache: "no-store",
+    });
+    const data = (await res.json()) as PollOverview & { error?: string };
+    if (!res.ok) {
+      throw new Error(data.error ?? "Failed to load poll");
+    }
+
+    cachePollOverview(pollIdStr, data);
+    return data;
+  }
+
   const now = Date.now();
   const cached = detailOverviewCache.get(pollIdStr);
   if (cached && cached.expiresAt > now) {
@@ -337,10 +362,7 @@ async function fetchPollOverview(pollIdStr: string): Promise<PollOverview> {
       throw new Error(data.error ?? "Failed to load poll");
     }
 
-    detailOverviewCache.set(pollIdStr, {
-      expiresAt: Date.now() + DETAIL_OVERVIEW_TTL_MS,
-      payload: data,
-    });
+    cachePollOverview(pollIdStr, data);
     return data;
   })().finally(() => {
     detailOverviewInflight.delete(pollIdStr);
@@ -439,6 +461,59 @@ function generatedCoverClass(id: string) {
     "from-cyan-100 via-white to-blue-100 dark:from-slate-800 dark:via-slate-900 dark:to-sky-950/70",
   ] as const;
   return variants[index];
+}
+
+type VoteMutationPayload =
+  | { kind: "normal"; cid: string }
+  | { kind: "rating"; cid: string; score: number };
+
+function withRecomputedCandidateStats(
+  overview: PollOverview,
+  candidates: PollOverview["candidates"],
+): PollOverview {
+  const totalVotes = candidates.reduce((sum, candidate) => sum + candidate.votes, 0);
+
+  return {
+    ...overview,
+    totalVotes,
+    candidates: [...candidates]
+      .sort((a, b) => {
+        if (b.votes !== a.votes) return b.votes - a.votes;
+        return Number(a.cid) - Number(b.cid);
+      })
+      .map((candidate) => ({
+        ...candidate,
+        percent: totalVotes > 0 ? (candidate.votes / totalVotes) * 100 : 0,
+      })),
+  };
+}
+
+function applyOptimisticVoteMutation(
+  overview: PollOverview,
+  payload: VoteMutationPayload,
+): PollOverview {
+  const nextCandidates = overview.candidates.map((candidate) => {
+    if (candidate.cid !== payload.cid) {
+      return candidate;
+    }
+
+    if (payload.kind === "normal") {
+      return {
+        ...candidate,
+        votes: candidate.votes + 1,
+      };
+    }
+
+    const nextVotes = candidate.votes + 1;
+    const previousTotalScore = (candidate.avgScore ?? 0) * candidate.votes;
+    return {
+      ...candidate,
+      votes: nextVotes,
+      avgScore: (previousTotalScore + payload.score) / nextVotes,
+    };
+  });
+
+  return withRecomputedCandidateStats(overview, nextCandidates);
 }
 
 type TimeFilter = "1H" | "24H" | "7D" | "All";
@@ -758,24 +833,54 @@ export function PollDetailClient({ pollIdStr }: Props) {
   const pid = useMemo(() => new BN(pollIdStr), [pollIdStr]);
   const loadGenRef = useRef(0);
 
-  const load = useCallback(async () => {
-    const gen = ++loadGenRef.current;
-    setErr(null);
-    setLoading(true);
-    try {
-      const data = await fetchPollOverview(pollIdStr);
-      if (gen !== loadGenRef.current) return;
-      setOverview(data);
-    } catch (e) {
-      if (gen === loadGenRef.current) {
-        setErr(e instanceof Error ? e.message : "Failed to load poll");
+  const load = useCallback(
+    async (options?: { force?: boolean; silent?: boolean }) => {
+      const gen = ++loadGenRef.current;
+      if (!options?.silent) {
+        setErr(null);
+        setLoading(true);
       }
-    } finally {
-      if (gen === loadGenRef.current) {
-        setLoading(false);
+      try {
+        const data = await fetchPollOverviewWithOptions(pollIdStr, {
+          force: options?.force,
+        });
+        if (gen !== loadGenRef.current) return;
+        setOverview(data);
+        cachePollOverview(pollIdStr, data);
+      } catch (e) {
+        if (gen === loadGenRef.current && !options?.silent) {
+          setErr(e instanceof Error ? e.message : "Failed to load poll");
+        }
+      } finally {
+        if (gen === loadGenRef.current && !options?.silent) {
+          setLoading(false);
+        }
       }
-    }
-  }, [pollIdStr]);
+    },
+    [pollIdStr],
+  );
+
+  const handleVoteRecorded = useCallback(
+    (payload: VoteMutationPayload) => {
+      const votedName =
+        payload.kind === "normal"
+          ? (overview?.candidates.find((candidate) => candidate.cid === payload.cid)
+              ?.name ?? null)
+          : null;
+
+      setOverview((prev) => {
+        if (!prev) return prev;
+        const next = applyOptimisticVoteMutation(prev, payload);
+        cachePollOverview(pollIdStr, next);
+        return next;
+      });
+
+      setHasVoted(true);
+      setVotedOptionLabel(payload.kind === "normal" ? votedName : null);
+      void load({ force: true, silent: true });
+    },
+    [load, overview, pollIdStr],
+  );
 
   useEffect(() => {
     load();
@@ -1077,9 +1182,7 @@ export function PollDetailClient({ pollIdStr }: Props) {
                 publicKey={publicKey}
                 explorerHref={overview.explorerHref}
                 metaHref={overview.metaHref}
-                onDone={() => {
-                  load();
-                }}
+                onDone={handleVoteRecorded}
               />
             ) : (
               <>
@@ -1633,7 +1736,7 @@ function InlinVotePanel({
   publicKey: PublicKey;
   explorerHref: string;
   metaHref: string | null;
-  onDone: () => void;
+  onDone: (payload: VoteMutationPayload) => void;
 }) {
   const programId = useMemo(() => votexProgramId(), []);
   const [sel, setSel] = useState<string>(candidates[0]?.cid ?? "");
@@ -1787,6 +1890,7 @@ function InlinVotePanel({
 
       if (kind === "normal") {
         setSubmitted(true);
+        onDone({ kind: "normal", cid: sel });
       } else {
         invalidateRaterState(programId, pollId, publicKey);
         setRatedCids((prev) => {
@@ -1798,8 +1902,8 @@ function InlinVotePanel({
         setNote(
           `Rated ${picked?.name ?? "candidate"}. You can rate another candidate.`,
         );
+        onDone({ kind: "rating", cid: sel, score });
       }
-      onDone();
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Submission failed";
       // "already processed" means the tx landed — treat as success
@@ -1811,6 +1915,7 @@ function InlinVotePanel({
       ) {
         if (kind === "normal") {
           setSubmitted(true);
+          onDone({ kind: "normal", cid: sel });
         } else {
           invalidateRaterState(programId, pollId, publicKey);
           setRatedCids((prev) => {
@@ -1819,8 +1924,8 @@ function InlinVotePanel({
             return next;
           });
           setNote("You already rated this candidate. Choose another one.");
+          onDone({ kind: "rating", cid: sel, score });
         }
-        onDone();
       } else {
         setNote(msg);
       }

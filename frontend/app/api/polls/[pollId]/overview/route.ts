@@ -228,11 +228,31 @@ function scheduleDetailRefresh(pollId: string) {
 }
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ pollId: string }> },
 ) {
   const { pollId } = await params;
+  const forceFresh = new URL(req.url).searchParams.get("fresh") === "1";
   const now = Date.now();
+
+  if (forceFresh) {
+    try {
+      const payload = await buildDetailOverview(pollId);
+      detailCache.set(pollId, {
+        expiresAt: Date.now() + CACHE_TTL_MS,
+        payload,
+      });
+      return NextResponse.json(payload, {
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to load poll overview";
+      return NextResponse.json({ error: message }, { status: 502 });
+    }
+  }
 
   const cached = detailCache.get(pollId);
   if (cached) {
