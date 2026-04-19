@@ -19,7 +19,6 @@ import {
   Vote,
 } from "lucide-react";
 import Image from "next/image";
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PublicKey } from "@solana/web3.js";
 import { Badge } from "@/components/ui/badge";
@@ -253,6 +252,43 @@ type PollOverview = {
 
 type Props = { pollIdStr: string };
 
+const DETAIL_OVERVIEW_TTL_MS = 15_000;
+const detailOverviewCache = new Map<
+  string,
+  { expiresAt: number; payload: PollOverview }
+>();
+const detailOverviewInflight = new Map<string, Promise<PollOverview>>();
+
+async function fetchPollOverview(pollIdStr: string): Promise<PollOverview> {
+  const now = Date.now();
+  const cached = detailOverviewCache.get(pollIdStr);
+  if (cached && cached.expiresAt > now) {
+    return cached.payload;
+  }
+
+  const inflight = detailOverviewInflight.get(pollIdStr);
+  if (inflight) return inflight;
+
+  const request = (async () => {
+    const res = await fetch(`/api/polls/${pollIdStr}/overview`);
+    const data = (await res.json()) as PollOverview & { error?: string };
+    if (!res.ok) {
+      throw new Error(data.error ?? "Failed to load poll");
+    }
+
+    detailOverviewCache.set(pollIdStr, {
+      expiresAt: Date.now() + DETAIL_OVERVIEW_TTL_MS,
+      payload: data,
+    });
+    return data;
+  })().finally(() => {
+    detailOverviewInflight.delete(pollIdStr);
+  });
+
+  detailOverviewInflight.set(pollIdStr, request);
+  return request;
+}
+
 function formatPercent(value: number) {
   return `${Math.round(value)}%`;
 }
@@ -293,6 +329,30 @@ function phaseTone(phase: string) {
     return "border-border/70 bg-background/70 text-muted-foreground";
   }
   return "border-sky-500/20 bg-sky-500/12 text-sky-700 dark:text-sky-300";
+}
+
+function deriveLivePhase(overview: PollOverview, nowSec: number) {
+  if (nowSec <= overview.registrationEnd) return "registration";
+  if (overview.accessMode === "merkleRestricted" && !overview.isFrozen) {
+    return "commit";
+  }
+  if (nowSec < overview.votingStart) return "waiting";
+  if (nowSec <= overview.votingEnd) return "voting";
+  return "ended";
+}
+
+function nextOverviewBoundarySec(
+  overview: PollOverview,
+  nowSec: number,
+): number | null {
+  const candidates = [
+    overview.registrationEnd + 1,
+    overview.votingStart,
+    overview.votingEnd + 1,
+  ].filter((ts) => ts > nowSec);
+
+  if (candidates.length === 0) return null;
+  return Math.min(...candidates);
 }
 
 function generatedCoverClass(id: string) {
@@ -612,6 +672,7 @@ export function PollDetailClient({ pollIdStr }: Props) {
   const { publicKey } = useWallet();
   const { program } = useVotexProgram();
   const [overview, setOverview] = useState<PollOverview | null>(null);
+  const [nowSec, setNowSec] = useState(() => nowUnix());
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [votedOptionLabel, setVotedOptionLabel] = useState<string | null>(null);
@@ -626,11 +687,7 @@ export function PollDetailClient({ pollIdStr }: Props) {
     setErr(null);
     setLoading(true);
     try {
-      const res = await fetch(`/api/polls/${pollIdStr}/overview`);
-      const data = (await res.json()) as PollOverview & { error?: string };
-      if (!res.ok) {
-        throw new Error(data.error ?? "Failed to load poll");
-      }
+      const data = await fetchPollOverview(pollIdStr);
       if (gen !== loadGenRef.current) return;
       setOverview(data);
     } catch (e) {
@@ -649,6 +706,55 @@ export function PollDetailClient({ pollIdStr }: Props) {
   }, [load]);
 
   useEffect(() => {
+    if (!overview || typeof document === "undefined") return;
+
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const clearScheduled = () => {
+      if (!timeoutId) return;
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    };
+
+    const scheduleNext = () => {
+      clearScheduled();
+      if (document.hidden) return;
+
+      const now = nowUnix();
+      const nextBoundary = nextOverviewBoundarySec(overview, now);
+      if (nextBoundary === null) return;
+
+      const delayMs = Math.max((nextBoundary - now) * 1000 + 100, 250);
+      timeoutId = setTimeout(() => {
+        setNowSec(nowUnix());
+        scheduleNext();
+      }, delayMs);
+    };
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        clearScheduled();
+        return;
+      }
+      setNowSec(nowUnix());
+      scheduleNext();
+    };
+
+    scheduleNext();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      clearScheduled();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [overview]);
+
+  const livePhase = useMemo(
+    () => (overview ? deriveLivePhase(overview, nowSec) : null),
+    [overview, nowSec],
+  );
+
+  useEffect(() => {
     let alive = true;
 
     if (program && publicKey && overview) {
@@ -656,9 +762,10 @@ export function PollDetailClient({ pollIdStr }: Props) {
     }
 
     async function loadVotedOption() {
-      if (!program || !publicKey || !overview) {
+      if (!program || !publicKey || !overview || livePhase !== "voting") {
         setVotedOptionLabel(null);
         setHasVoted(false);
+        setVotedStatusLoading(false);
         return;
       }
       try {
@@ -703,7 +810,7 @@ export function PollDetailClient({ pollIdStr }: Props) {
     return () => {
       alive = false;
     };
-  }, [program, publicKey, overview, pid]);
+  }, [program, publicKey, overview, pid, livePhase]);
 
   if (loading) {
     return (
@@ -750,9 +857,9 @@ export function PollDetailClient({ pollIdStr }: Props) {
                   </a>
                   <span className="inline-flex items-center gap-2">
                     <Clock3 className="size-4 text-primary" />
-                    {overview.phase === "voting"
+                    {livePhase === "voting"
                       ? formatShortCountdown(overview.votingEnd)
-                      : overview.phase === "ended"
+                      : livePhase === "ended"
                         ? "Voting ended"
                         : `Starts ${formatDateTime(overview.votingStart)}`}
                   </span>
@@ -761,11 +868,11 @@ export function PollDetailClient({ pollIdStr }: Props) {
                   <Badge
                     variant="outline"
                     className={`rounded-full px-3 py-1 text-sm ${phaseTone(
-                      overview.phase,
+                      livePhase ?? overview.phase,
                     )}`}
                   >
                     <span className="size-2 rounded-full bg-current opacity-75" />
-                    {phaseLabel(overview.phase)}
+                    {phaseLabel(livePhase ?? overview.phase)}
                   </Badge>
                   <Badge
                     variant="outline"
@@ -878,7 +985,7 @@ export function PollDetailClient({ pollIdStr }: Props) {
           <section className="glass-panel rounded-[1.85rem] p-5 sm:p-6">
             {publicKey &&
             program &&
-            overview.phase === "voting" &&
+            livePhase === "voting" &&
             !hasVoted &&
             !votedStatusLoading ? (
               <InlinVotePanel
@@ -999,13 +1106,13 @@ export function PollDetailClient({ pollIdStr }: Props) {
             <div className="mt-6 space-y-4">
               <div className="flex items-center justify-between gap-3">
                 <span
-                  className={`rounded-md border px-4 py-2 text-sm ${phaseTone(overview.phase)}`}
+                  className={`rounded-md border px-4 py-2 text-sm ${phaseTone(livePhase ?? overview.phase)}`}
                 >
-                  {phaseLabel(overview.phase)}
+                  {phaseLabel(livePhase ?? overview.phase)}
                 </span>
                 <span className="text-sm text-muted-foreground">
                   {formatDateTime(
-                    overview.phase === "ended"
+                    (livePhase ?? overview.phase) === "ended"
                       ? overview.votingEnd
                       : overview.votingStart,
                   )}
@@ -1036,14 +1143,12 @@ export function PollDetailClient({ pollIdStr }: Props) {
         {publicKey &&
           isCreator &&
           overview.accessMode === "merkleRestricted" &&
-          overview.phase === "registration" && (
-            <InviteManagerPanel pollId={pid} />
-          )}
+          livePhase === "registration" && <InviteManagerPanel pollId={pid} />}
 
         {publicKey &&
           !isCreator &&
           overview.accessMode === "merkleRestricted" &&
-          overview.phase === "registration" && (
+          livePhase === "registration" && (
             <RegisterWithInvitePanel pollId={pid} publicKey={publicKey} />
           )}
 

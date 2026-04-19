@@ -2,7 +2,12 @@
 
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import BN from "bn.js";
-import { Connection, SendTransactionError } from "@solana/web3.js";
+import {
+  ComputeBudgetProgram,
+  Connection,
+  SendTransactionError,
+  Transaction,
+} from "@solana/web3.js";
 import {
   ArrowLeft,
   ArrowRight,
@@ -285,43 +290,59 @@ export function CreatePollWizard() {
       const accessArg =
         access === "open" ? { open: {} } : { merkleRestricted: {} };
 
-      await program.methods
-        .createPoll(
-          registrationEnd,
-          votingStart,
-          votingEnd,
-          kindArg,
-          accessArg,
-          metadataUri,
-        )
-        .accountsPartial({
-          user: publicKey,
-          poll: pollPda(pid, nextPid),
-          counter: counterPda(pid),
-        })
-        .rpc();
-
       const names = parsedCandidates;
       if (names.length < 2) throw new Error("Add at least two candidates");
 
       const pollIdBn = nextPid;
-      // PDAs use sequential candidate ids 1..N (matches on-chain `(poll.candidates + 1)` seeds).
+      const tx = new Transaction();
+      tx.add(
+        ComputeBudgetProgram.setComputeUnitLimit({
+          units: 1_000_000,
+        }),
+      );
+      tx.add(
+        await program.methods
+          .createPoll(
+            registrationEnd,
+            votingStart,
+            votingEnd,
+            kindArg,
+            accessArg,
+            metadataUri,
+          )
+          .accountsPartial({
+            user: publicKey,
+            poll: pollPda(pid, pollIdBn),
+            counter: counterPda(pid),
+          })
+          .instruction(),
+      );
+
+      // Batch candidate registrations in the same transaction to reduce RPC round-trips.
       for (let i = 0; i < names.length; i++) {
         const name = names[i];
         if (name.length > 32)
           throw new Error(`Name too long (max 32): ${name}`);
         const cidBn = new BN(i + 1);
-        await program.methods
-          .registerCandidate(pollIdBn, name)
-          .accountsPartial({
-            user: publicKey,
-            poll: pollPda(pid, pollIdBn),
-            candidate: candidatePda(pid, pollIdBn, cidBn),
-            ratingResult: ratingResultPda(pid, pollIdBn, cidBn),
-            registrations: registrationsPda(pid),
-          })
-          .rpc();
+        tx.add(
+          await program.methods
+            .registerCandidate(pollIdBn, name)
+            .accountsPartial({
+              user: publicKey,
+              poll: pollPda(pid, pollIdBn),
+              candidate: candidatePda(pid, pollIdBn, cidBn),
+              ratingResult: ratingResultPda(pid, pollIdBn, cidBn),
+              registrations: registrationsPda(pid),
+            })
+            .instruction(),
+        );
       }
+
+      const sendAndConfirm = program.provider.sendAndConfirm;
+      if (!sendAndConfirm) {
+        throw new Error("Wallet provider cannot send transactions");
+      }
+      await sendAndConfirm.call(program.provider, tx);
 
       router.push(`/poll/${pollIdBn.toString()}`);
     } catch (e) {

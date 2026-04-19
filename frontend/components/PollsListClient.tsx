@@ -9,12 +9,12 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { SOLANA_CLUSTER_LABEL } from "@/lib/constants";
 import { nowUnix } from "@/lib/poll-utils";
 
-type PollRow = {
+export type PollRow = {
   id: string;
   title: string;
   imageHref: string | null;
@@ -64,8 +64,41 @@ function statusTone(phase: string) {
   return "border-sky-500/20 bg-sky-500/12 text-sky-700 dark:text-sky-300";
 }
 
-function timeLabel(row: PollRow) {
-  const phase = row.phase;
+function deriveRealtimePhase(row: PollRow, nowSec: number) {
+  // Keep commit phase authoritative from server since we don't have enough
+  // data client-side to know if eligibility was frozen.
+  if (row.phase === "commit") return "commit";
+
+  if (nowSec > row.votingEnd) return "ended";
+  if (nowSec >= row.votingStart) return "voting";
+  if (nowSec > row.registrationEnd) return "waiting";
+  return row.phase;
+}
+
+function nextPhaseBoundarySec(row: PollRow, nowSec: number): number | null {
+  if (row.phase === "commit") return null;
+
+  const candidates = [
+    row.registrationEnd + 1,
+    row.votingStart,
+    row.votingEnd + 1,
+  ].filter((ts) => ts > nowSec);
+
+  if (candidates.length === 0) return null;
+  return Math.min(...candidates);
+}
+
+function nextRowsBoundarySec(rows: PollRow[], nowSec: number): number | null {
+  let next: number | null = null;
+  for (const row of rows) {
+    const rowNext = nextPhaseBoundarySec(row, nowSec);
+    if (rowNext === null) continue;
+    if (next === null || rowNext < next) next = rowNext;
+  }
+  return next;
+}
+
+function timeLabel(row: PollRow, phase: string) {
   if (phase === "voting") return formatCompactDuration(row.votingEnd);
   if (phase === "ended") return "Ended";
   if (phase === "registration") {
@@ -142,61 +175,65 @@ function PollCardArtwork({
 
 type FilterTab = "all" | "active" | "ended";
 
-export function PollsListClient() {
-  const [rows, setRows] = useState<PollRow[]>([]);
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+export function PollsListClient({
+  initialRows,
+  initialError,
+}: {
+  initialRows: PollRow[];
+  initialError: string | null;
+}) {
   const [filter, setFilter] = useState<FilterTab>("all");
-  const loadGenRef = useRef(0);
+  const [nowSec, setNowSec] = useState(() => nowUnix());
+  const rows = initialRows;
 
   useEffect(() => {
-    const gen = ++loadGenRef.current;
-    setErr(null);
-    setLoading(true);
+    if (typeof document === "undefined") return;
 
-    (async () => {
-      try {
-        const res = await fetch("/api/polls/overview");
-        const data = (await res.json()) as {
-          rows?: PollRow[];
-          error?: string;
-        };
-        if (!res.ok) {
-          throw new Error(data.error ?? "Failed to load polls");
-        }
-        if (gen !== loadGenRef.current) return;
-        setRows(data.rows ?? []);
-      } catch (e) {
-        if (gen !== loadGenRef.current) return;
-        setErr(e instanceof Error ? e.message : "Failed to load polls");
-      } finally {
-        if (gen === loadGenRef.current) {
-          setLoading(false);
-        }
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const clearScheduled = () => {
+      if (!timeoutId) return;
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    };
+
+    const scheduleNext = () => {
+      clearScheduled();
+      if (document.hidden) return;
+
+      const now = nowUnix();
+      const nextBoundary = nextRowsBoundarySec(rows, now);
+      if (nextBoundary === null) return;
+
+      const delayMs = Math.max((nextBoundary - now) * 1000 + 100, 250);
+      timeoutId = setTimeout(() => {
+        setNowSec(nowUnix());
+        scheduleNext();
+      }, delayMs);
+    };
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        clearScheduled();
+        return;
       }
-    })();
-  }, []);
+      setNowSec(nowUnix());
+      scheduleNext();
+    };
 
-  if (loading) {
-    return (
-      <div className="space-y-3">
-        {[...Array(4)].map((_, i) => (
-          <div
-            key={i}
-            className="glass-panel animate-pulse rounded-[1.75rem] px-5 py-6"
-          >
-            <div className="mb-3 h-4 w-2/5 rounded-full bg-muted/50" />
-            <div className="h-3 w-1/4 rounded-full bg-muted/30" />
-          </div>
-        ))}
-      </div>
-    );
-  }
+    scheduleNext();
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
-  if (err) {
+    return () => {
+      clearScheduled();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [rows]);
+
+  if (initialError) {
     return (
       <div className="rounded-[1.5rem] border border-destructive/30 bg-destructive/10 px-5 py-4 text-sm text-destructive">
-        {err}
+        {initialError}
       </div>
     );
   }
@@ -219,8 +256,9 @@ export function PollsListClient() {
   const isActivePhase = (phase: string) => phase !== "ended";
 
   const filteredRows = rows.filter((row) => {
-    if (filter === "active") return isActivePhase(row.phase);
-    if (filter === "ended") return row.phase === "ended";
+    const realtimePhase = deriveRealtimePhase(row, nowSec);
+    if (filter === "active") return isActivePhase(realtimePhase);
+    if (filter === "ended") return realtimePhase === "ended";
     return true;
   });
 
@@ -239,8 +277,8 @@ export function PollsListClient() {
               ? rows.length
               : rows.filter((r) =>
                   tab.key === "active"
-                    ? isActivePhase(r.phase)
-                    : r.phase === "ended",
+                    ? isActivePhase(deriveRealtimePhase(r, nowSec))
+                    : deriveRealtimePhase(r, nowSec) === "ended",
                 ).length;
           const isActive = filter === tab.key;
           return (
@@ -274,104 +312,107 @@ export function PollsListClient() {
         </div>
       ) : (
         <ul className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-          {filteredRows.map((row) => (
-            <li key={row.id}>
-              <Link
-                href={`/poll/${row.id}`}
-                className="block overflow-hidden rounded-[1.75rem] border border-border/70 bg-card shadow-(--shadow-soft) transition hover:-translate-y-1 hover:border-primary/25"
-              >
-                <PollCardArtwork
-                  kind={row.kindLabel}
-                  accessLabel={row.accessLabel}
-                  pollId={row.id}
-                  imageHref={row.imageHref}
-                />
+          {filteredRows.map((row) => {
+            const realtimePhase = deriveRealtimePhase(row, nowSec);
+            return (
+              <li key={row.id}>
+                <Link
+                  href={`/poll/${row.id}`}
+                  className="block overflow-hidden rounded-[1.75rem] border border-border/70 bg-card shadow-(--shadow-soft) transition hover:-translate-y-1 hover:border-primary/25"
+                >
+                  <PollCardArtwork
+                    kind={row.kindLabel}
+                    accessLabel={row.accessLabel}
+                    pollId={row.id}
+                    imageHref={row.imageHref}
+                  />
 
-                <div className="space-y-5 p-5">
-                  <div className="flex flex-wrap gap-2">
-                    <Badge
-                      variant="outline"
-                      className={`rounded-full px-3 py-1 text-sm ${statusTone(row.phase)}`}
-                    >
-                      <span className="size-2 rounded-full bg-current opacity-75" />
-                      {statusLabel(row.phase)}
-                    </Badge>
-                    <Badge
-                      variant="outline"
-                      className="rounded-full border-border/70 bg-background/65 px-3 py-1 text-sm text-muted-foreground"
-                    >
-                      <MapPin className="size-3.5" />
-                      {SOLANA_CLUSTER_LABEL}
-                    </Badge>
-                    <Badge
-                      variant="outline"
-                      className="rounded-full border-border/70 bg-background/65 px-3 py-1 text-sm text-muted-foreground"
-                    >
-                      <Vote className="size-3.5" />
-                      {row.kindLabel}
-                    </Badge>
-                  </div>
+                  <div className="space-y-5 p-5">
+                    <div className="flex flex-wrap gap-2">
+                      <Badge
+                        variant="outline"
+                        className={`rounded-full px-3 py-1 text-sm ${statusTone(realtimePhase)}`}
+                      >
+                        <span className="size-2 rounded-full bg-current opacity-75" />
+                        {statusLabel(realtimePhase)}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className="rounded-full border-border/70 bg-background/65 px-3 py-1 text-sm text-muted-foreground"
+                      >
+                        <MapPin className="size-3.5" />
+                        {SOLANA_CLUSTER_LABEL}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className="rounded-full border-border/70 bg-background/65 px-3 py-1 text-sm text-muted-foreground"
+                      >
+                        <Vote className="size-3.5" />
+                        {row.kindLabel}
+                      </Badge>
+                    </div>
 
-                  <div>
-                    <h2 className="line-clamp-2 font-heading text-[1.55rem] font-semibold tracking-[-0.04em] text-foreground">
-                      {row.title}
-                    </h2>
-                  </div>
+                    <div>
+                      <h2 className="line-clamp-2 font-heading text-[1.55rem] font-semibold tracking-[-0.04em] text-foreground">
+                        {row.title}
+                      </h2>
+                    </div>
 
-                  <div className="rounded-[1.35rem] border border-border/70 bg-background/55 p-3">
-                    {row.candidates.length > 0 ? (
-                      <div className="space-y-2">
-                        {row.candidates.map((candidate, index) => (
-                          <div
-                            key={`${row.id}-${candidate.name}-${index}`}
-                            className="flex items-center justify-between gap-3 rounded-2xl bg-white/50 px-3 py-3 dark:bg-slate-900/40"
-                          >
-                            <div className="min-w-0">
-                              <p className="truncate text-base font-medium text-foreground">
-                                {candidate.name}
-                              </p>
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                {candidate.value} vote
-                                {candidate.value === 1 ? "" : "s"}
-                              </p>
-                            </div>
+                    <div className="rounded-[1.35rem] border border-border/70 bg-background/55 p-3">
+                      {row.candidates.length > 0 ? (
+                        <div className="space-y-2">
+                          {row.candidates.map((candidate, index) => (
                             <div
-                              className={`shrink-0 rounded-xl px-3 py-2 text-base font-semibold ${
-                                index === 0
-                                  ? "bg-rose-500/14 text-rose-700 dark:text-rose-300"
-                                  : "bg-indigo-500/12 text-indigo-700 dark:text-indigo-300"
-                              }`}
+                              key={`${row.id}-${candidate.name}-${index}`}
+                              className="flex items-center justify-between gap-3 rounded-2xl bg-white/50 px-3 py-3 dark:bg-slate-900/40"
                             >
-                              {formatPercent(candidate.percent)} →
+                              <div className="min-w-0">
+                                <p className="truncate text-base font-medium text-foreground">
+                                  {candidate.name}
+                                </p>
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  {candidate.value} vote
+                                  {candidate.value === 1 ? "" : "s"}
+                                </p>
+                              </div>
+                              <div
+                                className={`shrink-0 rounded-xl px-3 py-2 text-base font-semibold ${
+                                  index === 0
+                                    ? "bg-rose-500/14 text-rose-700 dark:text-rose-300"
+                                    : "bg-indigo-500/12 text-indigo-700 dark:text-indigo-300"
+                                }`}
+                              >
+                                {formatPercent(candidate.percent)} →
+                              </div>
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2 rounded-2xl bg-white/50 px-3 py-4 text-sm text-muted-foreground dark:bg-slate-900/40">
-                        <ChartNoAxesCombined className="size-4 text-primary" />
-                        No votes yet. Open the poll to participate or review the
-                        setup.
-                      </div>
-                    )}
-                  </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 rounded-2xl bg-white/50 px-3 py-4 text-sm text-muted-foreground dark:bg-slate-900/40">
+                          <ChartNoAxesCombined className="size-4 text-primary" />
+                          No votes yet. Open the poll to participate or review
+                          the setup.
+                        </div>
+                      )}
+                    </div>
 
-                  <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
-                    <div className="flex items-center gap-2">
-                      <ChartNoAxesCombined className="size-4 text-primary" />
-                      <span>
-                        {row.totalVotes} vote{row.totalVotes === 1 ? "" : "s"}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 font-medium">
-                      <Clock3 className="size-4 text-primary" />
-                      <span>{timeLabel(row)}</span>
+                    <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+                      <div className="flex items-center gap-2">
+                        <ChartNoAxesCombined className="size-4 text-primary" />
+                        <span>
+                          {row.totalVotes} vote{row.totalVotes === 1 ? "" : "s"}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 font-medium">
+                        <Clock3 className="size-4 text-primary" />
+                        <span>{timeLabel(row, realtimePhase)}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </Link>
-            </li>
-          ))}
+                </Link>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
