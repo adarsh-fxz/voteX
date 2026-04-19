@@ -355,6 +355,20 @@ function nextOverviewBoundarySec(
   return Math.min(...candidates);
 }
 
+function isCandidateAlreadyRated(ratedMaskWords: BN[], cid: string): boolean {
+  const cidNum = Number(cid);
+  if (!Number.isFinite(cidNum) || cidNum < 1) return false;
+
+  const bitIndex = cidNum - 1;
+  const wordIndex = Math.floor(bitIndex / 64);
+  const bitOffset = bitIndex % 64;
+  const word = ratedMaskWords[wordIndex];
+  if (!word) return false;
+
+  const shifted = word.clone().shrn(bitOffset);
+  return !shifted.and(new BN(1)).isZero();
+}
+
 function generatedCoverClass(id: string) {
   const index = Number(id) % 4;
   const variants = [
@@ -829,6 +843,13 @@ export function PollDetailClient({ pollIdStr }: Props) {
   }
 
   const isCreator = publicKey?.toBase58() === overview.creator;
+  const showVotePanel =
+    !!publicKey &&
+    !!program &&
+    livePhase === "voting" &&
+    !votedStatusLoading &&
+    (overview.kind === "rating" || !hasVoted);
+
   return (
     <div className="space-y-8">
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_360px]">
@@ -983,11 +1004,7 @@ export function PollDetailClient({ pollIdStr }: Props) {
 
         <aside className="space-y-6">
           <section className="glass-panel rounded-[1.85rem] p-5 sm:p-6">
-            {publicKey &&
-            program &&
-            livePhase === "voting" &&
-            !hasVoted &&
-            !votedStatusLoading ? (
+            {showVotePanel ? (
               <InlinVotePanel
                 kind={overview.kind}
                 accessMode={overview.accessMode}
@@ -995,6 +1012,8 @@ export function PollDetailClient({ pollIdStr }: Props) {
                 candidates={overview.candidates}
                 program={program}
                 publicKey={publicKey}
+                explorerHref={overview.explorerHref}
+                metaHref={overview.metaHref}
                 onDone={() => {
                   load();
                 }}
@@ -1534,6 +1553,8 @@ function InlinVotePanel({
   candidates,
   program,
   publicKey,
+  explorerHref,
+  metaHref,
   onDone,
 }: {
   kind: "normal" | "rating";
@@ -1548,18 +1569,100 @@ function InlinVotePanel({
   }>;
   program: NonNullable<ReturnType<typeof useVotexProgram>["program"]>;
   publicKey: PublicKey;
+  explorerHref: string;
+  metaHref: string | null;
   onDone: () => void;
 }) {
-  const programId = votexProgramId();
+  const programId = useMemo(() => votexProgramId(), []);
   const [sel, setSel] = useState<string>(candidates[0]?.cid ?? "");
   const [score, setScore] = useState(3);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [ratedCids, setRatedCids] = useState<Set<string>>(new Set());
+  const [ratedStateLoading, setRatedStateLoading] = useState(false);
+  const allCandidatesRated =
+    kind === "rating" &&
+    candidates.length > 0 &&
+    candidates.every((c) => ratedCids.has(c.cid));
 
   useEffect(() => {
-    setSel(candidates[0]?.cid ?? "");
-  }, [candidates]);
+    setSel((prev) => {
+      const firstEligible =
+        kind === "rating"
+          ? candidates.find((c) => !ratedCids.has(c.cid))?.cid
+          : candidates[0]?.cid;
+
+      if (
+        prev &&
+        candidates.some(
+          (c) => c.cid === prev && (kind !== "rating" || !ratedCids.has(c.cid)),
+        )
+      ) {
+        return prev;
+      }
+
+      return firstEligible ?? "";
+    });
+  }, [candidates, kind, ratedCids]);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function loadRatedCandidates() {
+      if (kind !== "rating") {
+        setRatedCids((prev) => (prev.size === 0 ? prev : new Set()));
+        setRatedStateLoading(false);
+        return;
+      }
+
+      setRatedStateLoading(true);
+      try {
+        const rater = await program.account.rater.fetchNullable(
+          raterPda(programId, pollId, publicKey),
+        );
+        if (!alive) return;
+
+        if (!rater) {
+          setRatedCids((prev) => (prev.size === 0 ? prev : new Set()));
+          return;
+        }
+
+        const ratedMaskWords = (rater as unknown as { ratedMask: BN[] })
+          .ratedMask;
+        const nextRated = new Set<string>();
+        for (const candidate of candidates) {
+          if (isCandidateAlreadyRated(ratedMaskWords, candidate.cid)) {
+            nextRated.add(candidate.cid);
+          }
+        }
+        setRatedCids((prev) => {
+          if (prev.size === nextRated.size) {
+            let same = true;
+            for (const cid of prev) {
+              if (!nextRated.has(cid)) {
+                same = false;
+                break;
+              }
+            }
+            if (same) return prev;
+          }
+          return nextRated;
+        });
+      } catch {
+        if (alive) {
+          setRatedCids((prev) => (prev.size === 0 ? prev : new Set()));
+        }
+      } finally {
+        if (alive) setRatedStateLoading(false);
+      }
+    }
+
+    loadRatedCandidates();
+    return () => {
+      alive = false;
+    };
+  }, [kind, candidates, pollId, program, programId, publicKey]);
 
   async function proofForWallet(): Promise<number[][]> {
     if (accessMode === "open") return [];
@@ -1583,6 +1686,16 @@ function InlinVotePanel({
     setBusy(true);
     setNote(null);
     try {
+      if (kind === "rating" && allCandidatesRated) {
+        setNote("You already rated all candidates.");
+        return;
+      }
+
+      if (kind === "rating" && ratedCids.has(sel)) {
+        setNote("You already rated this candidate. Choose another one.");
+        return;
+      }
+
       const cid = new BN(sel);
       const proof = await proofForWallet();
       if (kind === "normal") {
@@ -1607,7 +1720,20 @@ function InlinVotePanel({
           })
           .rpc();
       }
-      setSubmitted(true);
+
+      if (kind === "normal") {
+        setSubmitted(true);
+      } else {
+        setRatedCids((prev) => {
+          const next = new Set(prev);
+          next.add(sel);
+          return next;
+        });
+        const picked = candidates.find((c) => c.cid === sel);
+        setNote(
+          `Rated ${picked?.name ?? "candidate"}. You can rate another candidate.`,
+        );
+      }
       onDone();
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Submission failed";
@@ -1618,7 +1744,16 @@ function InlinVotePanel({
         msg.includes("already voted") ||
         msg.includes("already rated")
       ) {
-        setSubmitted(true);
+        if (kind === "normal") {
+          setSubmitted(true);
+        } else {
+          setRatedCids((prev) => {
+            const next = new Set(prev);
+            next.add(sel);
+            return next;
+          });
+          setNote("You already rated this candidate. Choose another one.");
+        }
         onDone();
       } else {
         setNote(msg);
@@ -1634,17 +1769,24 @@ function InlinVotePanel({
         {kind === "rating" ? "Rate a candidate" : "Cast your vote"}
       </h3>
       <p className="mt-1 text-sm text-muted-foreground">
-        Select an option and submit. Your vote is final.
+        {kind === "rating" && allCandidatesRated
+          ? "You have rated all candidates."
+          : "Select an option and submit. Your vote is final."}
       </p>
 
       <div className="mt-4 space-y-2">
         {candidates.map((c, index) => {
           const color = CANDIDATE_COLORS[index % CANDIDATE_COLORS.length];
           const isSelected = sel === c.cid;
+          const isAlreadyRated = kind === "rating" && ratedCids.has(c.cid);
           return (
             <label
               key={c.cid}
-              className="flex cursor-pointer items-center gap-3 rounded-[1.1rem] border px-4 py-3 transition-colors"
+              className={`flex items-center gap-3 rounded-[1.1rem] border px-4 py-3 transition-colors ${
+                isAlreadyRated
+                  ? "cursor-not-allowed opacity-60"
+                  : "cursor-pointer"
+              }`}
               style={{
                 borderColor: isSelected ? `${color}99` : `${color}44`,
                 backgroundColor: isSelected ? `${color}1a` : `${color}0d`,
@@ -1656,11 +1798,16 @@ function InlinVotePanel({
                 value={c.cid}
                 checked={isSelected}
                 onChange={() => setSel(c.cid)}
-                disabled={submitted || busy}
+                disabled={submitted || busy || isAlreadyRated}
                 className="accent-primary"
               />
               <span className="flex-1 font-medium text-foreground">
                 {c.name}
+                {isAlreadyRated && (
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    already rated
+                  </span>
+                )}
               </span>
               <span className="text-sm font-semibold" style={{ color }}>
                 {kind === "rating"
@@ -1674,7 +1821,7 @@ function InlinVotePanel({
         })}
       </div>
 
-      {kind === "rating" && (
+      {kind === "rating" && !allCandidatesRated && (
         <div className="mt-4">
           <label className="block text-sm text-muted-foreground">
             Score (1–5)
@@ -1698,25 +1845,61 @@ function InlinVotePanel({
 
       {note && <p className="mt-3 text-sm text-destructive">{note}</p>}
 
-      <button
-        type="button"
-        disabled={busy || submitted}
-        onClick={handleSubmit}
-        className="button-primary-premium mt-4 w-full justify-center gap-2"
-      >
-        {submitted ? (
-          <>
-            <Lock className="size-4" />
-            {kind === "rating" ? "Rating submitted" : "Vote submitted"}
-          </>
-        ) : busy ? (
-          "Submitting…"
-        ) : kind === "rating" ? (
-          "Submit rating"
-        ) : (
-          "Submit vote"
-        )}
-      </button>
+      {kind === "rating" && allCandidatesRated ? (
+        <div className="mt-4 space-y-3">
+          <div className="flex items-center justify-center gap-2 rounded-[1.25rem] border border-border/70 bg-background/55 px-4 py-4 text-center text-sm text-muted-foreground">
+            <Lock className="size-4 text-primary" />
+            <span>All candidates rated</span>
+          </div>
+          <div className="grid gap-3">
+            <a
+              href={explorerHref}
+              target="_blank"
+              rel="noreferrer"
+              className="button-primary-premium justify-center gap-2 text-sm"
+            >
+              View on Solana Explorer
+              <ExternalLink className="size-4" />
+            </a>
+            {metaHref ? (
+              <a
+                href={metaHref}
+                target="_blank"
+                rel="noreferrer"
+                className="button-secondary-premium justify-center gap-2 text-sm"
+              >
+                Open metadata
+                <ExternalLink className="size-4" />
+              </a>
+            ) : null}
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          disabled={
+            busy ||
+            submitted ||
+            !sel ||
+            (kind === "rating" && (ratedStateLoading || ratedCids.has(sel)))
+          }
+          onClick={handleSubmit}
+          className="button-primary-premium mt-4 w-full justify-center gap-2"
+        >
+          {submitted ? (
+            <>
+              <Lock className="size-4" />
+              {kind === "rating" ? "Rating submitted" : "Vote submitted"}
+            </>
+          ) : busy ? (
+            "Submitting…"
+          ) : kind === "rating" ? (
+            "Submit rating"
+          ) : (
+            "Submit vote"
+          )}
+        </button>
+      )}
     </div>
   );
 }
