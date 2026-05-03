@@ -3,6 +3,7 @@
 import {
   ChartNoAxesCombined,
   Clock3,
+  Flag,
   Landmark,
   MapPin,
   Vote,
@@ -184,7 +185,23 @@ export function PollsListClient({
 }) {
   const [filter, setFilter] = useState<FilterTab>("all");
   const [nowSec, setNowSec] = useState(() => nowUnix());
+  const [flags, setFlags] = useState<Record<string, string>>({});
   const rows = initialRows;
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/polls/flags")
+      .then((res) => (res.ok ? res.json() : Promise.reject(res)))
+      .then((data: { flags?: Record<string, string> }) => {
+        if (!cancelled) setFlags(data.flags ?? {});
+      })
+      .catch(() => {
+        // Best-effort; absence of flag data is non-blocking.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -314,11 +331,16 @@ export function PollsListClient({
         <ul className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
           {filteredRows.map((row) => {
             const realtimePhase = deriveRealtimePhase(row, nowSec);
+            const flagReason = flags[row.id];
             return (
               <li key={row.id}>
                 <Link
                   href={`/poll/${row.id}`}
-                  className="block overflow-hidden rounded-[1.75rem] border border-border/70 bg-card shadow-(--shadow-soft) transition hover:-translate-y-1 hover:border-primary/25"
+                  className={`block overflow-hidden rounded-[1.75rem] border bg-card shadow-(--shadow-soft) transition hover:-translate-y-1 ${
+                    flagReason
+                      ? "border-rose-500/40 hover:border-rose-500/60"
+                      : "border-border/70 hover:border-primary/25"
+                  }`}
                 >
                   <PollCardArtwork
                     kind={row.kindLabel}
@@ -328,6 +350,14 @@ export function PollsListClient({
                   />
 
                   <div className="space-y-5 p-5">
+                    {flagReason && (
+                      <div className="flex items-start gap-2 rounded-2xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-700 dark:text-rose-300">
+                        <Flag className="mt-0.5 size-3.5 shrink-0" />
+                        <span className="leading-relaxed">
+                          Flagged by moderator: {flagReason}
+                        </span>
+                      </div>
+                    )}
                     <div className="flex flex-wrap gap-2">
                       <Badge
                         variant="outline"

@@ -10,6 +10,7 @@ import {
   Clock3,
   Donut,
   ExternalLink,
+  Flag,
   Landmark,
   Lock,
   MapPinned,
@@ -24,6 +25,7 @@ import { PublicKey } from "@solana/web3.js";
 import { Badge } from "@/components/ui/badge";
 import { useVotexProgram } from "@/hooks/useVotexProgram";
 import {
+  ADMIN_PUBKEY,
   ONCHAIN_IPFS_REF_MAX_LEN,
   SOLANA_CLUSTER_LABEL,
 } from "@/lib/constants";
@@ -625,7 +627,7 @@ function AnalyticsSection({ overview }: { overview: PollOverview }) {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            className="flex items-center gap-1.5 rounded-full bg-rose-500/14 px-4 py-2 text-sm font-medium text-rose-700 dark:text-rose-300"
+            className="flex cursor-pointer items-center gap-1.5 rounded-full bg-rose-500/14 px-4 py-2 text-sm font-medium text-rose-700 dark:text-rose-300"
           >
             <ChevronDown className="size-3.5" />
             All outcomes
@@ -633,7 +635,7 @@ function AnalyticsSection({ overview }: { overview: PollOverview }) {
           <button
             type="button"
             onClick={() => setChartView("line")}
-            className={`rounded-full border p-2 transition-colors ${
+            className={`cursor-pointer rounded-full border p-2 transition-colors ${
               chartView === "line"
                 ? "border-rose-500/30 bg-rose-500/14 text-rose-600 dark:text-rose-300"
                 : "border-border/70 bg-background/60 text-muted-foreground hover:text-foreground"
@@ -644,7 +646,7 @@ function AnalyticsSection({ overview }: { overview: PollOverview }) {
           <button
             type="button"
             onClick={() => setChartView("donut")}
-            className={`rounded-full border p-2 transition-colors ${
+            className={`cursor-pointer rounded-full border p-2 transition-colors ${
               chartView === "donut"
                 ? "border-rose-500/30 bg-rose-500/14 text-rose-600 dark:text-rose-300"
                 : "border-border/70 bg-background/60 text-muted-foreground hover:text-foreground"
@@ -659,7 +661,7 @@ function AnalyticsSection({ overview }: { overview: PollOverview }) {
               key={f}
               type="button"
               onClick={() => setTimeFilter(f)}
-              className={`rounded-full px-4 py-2 text-sm transition-colors ${
+              className={`cursor-pointer rounded-full px-4 py-2 text-sm transition-colors ${
                 timeFilter === f
                   ? "bg-rose-500/14 text-rose-700 dark:text-rose-300"
                   : "border border-border/70 bg-background/60 text-muted-foreground hover:text-foreground"
@@ -819,7 +821,7 @@ function PollCoverArtwork({
 }
 
 export function PollDetailClient({ pollIdStr }: Props) {
-  const { publicKey } = useWallet();
+  const { publicKey, signMessage } = useWallet();
   const { program } = useVotexProgram();
   const [overview, setOverview] = useState<PollOverview | null>(null);
   const [nowSec, setNowSec] = useState(() => nowUnix());
@@ -828,6 +830,7 @@ export function PollDetailClient({ pollIdStr }: Props) {
   const [votedOptionLabel, setVotedOptionLabel] = useState<string | null>(null);
   const [hasVoted, setHasVoted] = useState(false);
   const [votedStatusLoading, setVotedStatusLoading] = useState(false);
+  const [flagReason, setFlagReason] = useState<string | null>(null);
 
   const programId = useMemo(() => votexProgramId(), []);
   const pid = useMemo(() => new BN(pollIdStr), [pollIdStr]);
@@ -885,6 +888,22 @@ export function PollDetailClient({ pollIdStr }: Props) {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/polls/flags")
+      .then((res) => (res.ok ? res.json() : Promise.reject(res)))
+      .then((data: { flags?: Record<string, string> }) => {
+        if (cancelled) return;
+        setFlagReason(data.flags?.[pollIdStr] ?? null);
+      })
+      .catch(() => {
+        // Best-effort — moderator state isn't critical for rendering.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pollIdStr]);
 
   useEffect(() => {
     if (!overview || typeof document === "undefined") return;
@@ -1011,6 +1030,7 @@ export function PollDetailClient({ pollIdStr }: Props) {
   }
 
   const isCreator = publicKey?.toBase58() === overview.creator;
+  const isAdmin = publicKey?.toBase58() === ADMIN_PUBKEY;
   const showVotePanel =
     !!publicKey &&
     !!program &&
@@ -1020,6 +1040,17 @@ export function PollDetailClient({ pollIdStr }: Props) {
 
   return (
     <div className="space-y-8">
+      {flagReason && (
+        <div className="flex items-start gap-3 rounded-[1.5rem] border border-rose-500/40 bg-rose-500/10 px-5 py-4 text-sm text-rose-700 dark:text-rose-300">
+          <Flag className="mt-0.5 size-5 shrink-0" />
+          <div>
+            <p className="font-semibold">Flagged by moderator</p>
+            <p className="mt-1 text-rose-700/90 dark:text-rose-300/90">
+              {flagReason}
+            </p>
+          </div>
+        </div>
+      )}
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_360px]">
         <div className="space-y-6">
           <section className="glass-panel rounded-[1.85rem] p-5 sm:p-6">
@@ -1168,6 +1199,16 @@ export function PollDetailClient({ pollIdStr }: Props) {
               )}
             </div>
           </details>
+
+          {isAdmin && signMessage && (
+            <ModeratorFlagPanel
+              pollId={pollIdStr}
+              adminPubkey={publicKey!.toBase58()}
+              signMessage={signMessage}
+              flagReason={flagReason}
+              onChange={setFlagReason}
+            />
+          )}
         </div>
 
         <aside className="space-y-6">
@@ -1182,6 +1223,7 @@ export function PollDetailClient({ pollIdStr }: Props) {
                 publicKey={publicKey}
                 explorerHref={overview.explorerHref}
                 metaHref={overview.metaHref}
+                flagReason={flagReason}
                 onDone={handleVoteRecorded}
               />
             ) : (
@@ -1346,6 +1388,7 @@ export function PollDetailClient({ pollIdStr }: Props) {
             <CommitPanel pollId={pid} program={program} onDone={load} />
           )}
       </div>
+
     </div>
   );
 }
@@ -1720,6 +1763,7 @@ function InlinVotePanel({
   publicKey,
   explorerHref,
   metaHref,
+  flagReason,
   onDone,
 }: {
   kind: "normal" | "rating";
@@ -1736,6 +1780,7 @@ function InlinVotePanel({
   publicKey: PublicKey;
   explorerHref: string;
   metaHref: string | null;
+  flagReason: string | null;
   onDone: (payload: VoteMutationPayload) => void;
 }) {
   const programId = useMemo(() => votexProgramId(), []);
@@ -1969,7 +2014,7 @@ function InlinVotePanel({
                 value={c.cid}
                 checked={isSelected}
                 onChange={() => setSel(c.cid)}
-                disabled={submitted || busy || isAlreadyRated}
+                disabled={!!flagReason || submitted || busy || isAlreadyRated}
                 className="accent-primary"
               />
               <span className="flex-1 font-medium text-foreground">
@@ -2010,7 +2055,7 @@ function InlinVotePanel({
               max={5}
               value={score}
               onChange={(e) => setScore(Number(e.target.value))}
-              disabled={submitted || busy}
+              disabled={!!flagReason || submitted || busy}
               className="flex-1 accent-primary"
             />
             <span className="w-6 text-center font-semibold text-foreground">
@@ -2022,7 +2067,17 @@ function InlinVotePanel({
 
       {note && <p className="mt-3 text-sm text-destructive">{note}</p>}
 
-      {kind === "rating" && allCandidatesRated ? (
+      {flagReason ? (
+        <div className="mt-4 flex items-start gap-3 rounded-[1.25rem] border border-rose-500/40 bg-rose-500/10 px-4 py-4 text-sm text-rose-700 dark:text-rose-300">
+          <Flag className="mt-0.5 size-4 shrink-0" />
+          <div>
+            <p className="font-semibold">Voting disabled</p>
+            <p className="mt-0.5 text-rose-700/80 dark:text-rose-300/80">
+              This poll has been flagged by a moderator: {flagReason}
+            </p>
+          </div>
+        </div>
+      ) : kind === "rating" && allCandidatesRated ? (
         <div className="mt-4 space-y-3">
           <div className="flex items-center justify-center gap-2 rounded-[1.25rem] border border-border/70 bg-background/55 px-4 py-4 text-center text-sm text-muted-foreground">
             <Lock className="size-4 text-primary" />
@@ -2078,5 +2133,194 @@ function InlinVotePanel({
         </button>
       )}
     </div>
+  );
+}
+
+const PRESET_FLAG_REASONS = [
+  "Inappropriate content",
+  "Impersonates a government official or institution",
+  "Targets a sitting prime minister or head of state",
+  "Vulgar or abusive language",
+  "Hate speech or harassment",
+];
+
+function ModeratorFlagPanel({
+  pollId,
+  adminPubkey,
+  signMessage,
+  flagReason,
+  onChange,
+}: {
+  pollId: string;
+  adminPubkey: string;
+  signMessage: (message: Uint8Array) => Promise<Uint8Array>;
+  flagReason: string | null;
+  onChange: (next: string | null) => void;
+}) {
+  const [reason, setReason] = useState(PRESET_FLAG_REASONS[0]);
+  const [custom, setCustom] = useState("");
+  const [busy, setBusy] = useState<"flag" | "unflag" | null>(null);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const isAlreadyFlagged = !!flagReason;
+
+  async function submitFlag() {
+    setBusy("flag");
+    setMsg(null);
+    try {
+      const finalReason = (custom.trim() || reason).slice(0, 200);
+      const message = new TextEncoder().encode(
+        `flag:${pollId}:${adminPubkey}`,
+      );
+      const sigBytes = await signMessage(message);
+      const signature = bs58Import.encode(sigBytes);
+
+      const res = await fetch(`/api/polls/${pollId}/flag`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reason: finalReason,
+          pubkey: adminPubkey,
+          signature,
+        }),
+      });
+      const data = (await res.json()) as { reason?: string; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Flag failed");
+      onChange(data.reason ?? finalReason);
+      setMsg({ ok: true, text: "Poll flagged." });
+      setCustom("");
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : "Failed" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function submitUnflag() {
+    setBusy("unflag");
+    setMsg(null);
+    try {
+      const message = new TextEncoder().encode(
+        `unflag:${pollId}:${adminPubkey}`,
+      );
+      const sigBytes = await signMessage(message);
+      const signature = bs58Import.encode(sigBytes);
+
+      const res = await fetch(`/api/polls/${pollId}/flag`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pubkey: adminPubkey,
+          signature,
+        }),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Unflag failed");
+      onChange(null);
+      setMsg({ ok: true, text: "Flag removed." });
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : "Failed" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <section className="glass-panel rounded-[1.85rem] border border-rose-500/25 p-5 sm:p-6">
+      <div className="flex items-center gap-2.5">
+        <span className="flex size-9 items-center justify-center rounded-xl border border-rose-500/30 bg-rose-500/10">
+          <Flag className="size-4 text-rose-500" />
+        </span>
+        <div>
+          <h3 className="font-heading text-lg font-semibold tracking-[-0.03em]">
+            Moderator controls
+          </h3>
+          <p className="text-xs text-muted-foreground">Admin wallet connected</p>
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-[1.25rem] border border-rose-500/15 bg-rose-500/6 px-4 py-3 text-sm text-muted-foreground">
+        Flagging a poll adds a public banner to its card and detail page so
+        users see it has been moderated for inappropriate content.
+      </div>
+
+      {!isAlreadyFlagged ? (
+        <div className="mt-4 space-y-3">
+          <div>
+            <label className="mb-1.5 block text-xs font-medium uppercase tracking-widest text-muted-foreground">
+              Reason
+            </label>
+            <div className="relative">
+              <select
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                className="input-premium w-full appearance-none pr-10 text-sm"
+              >
+                {PRESET_FLAG_REASONS.map((r) => (
+                  <option
+                    key={r}
+                    value={r}
+                    style={{
+                      background: "hsl(var(--background))",
+                      color: "hsl(var(--foreground))",
+                      padding: "8px 12px",
+                    }}
+                  >
+                    {r}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            </div>
+          </div>
+          <input
+            type="text"
+            placeholder="Or type a custom reason (overrides preset)…"
+            value={custom}
+            onChange={(e) => setCustom(e.target.value)}
+            className="input-premium w-full text-sm"
+            maxLength={200}
+          />
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              type="button"
+              onClick={submitFlag}
+              disabled={busy !== null}
+              className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-rose-500/40 bg-rose-500/12 px-5 py-2.5 text-sm font-medium text-rose-700 transition hover:bg-rose-500/20 disabled:opacity-50 dark:text-rose-300"
+            >
+              <Flag className="size-3.5" />
+              {busy === "flag" ? "Signing & flagging…" : "Flag this poll"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-4 flex items-center justify-between gap-4 rounded-[1.25rem] border border-rose-500/20 bg-rose-500/8 px-4 py-3">
+          <div className="flex items-center gap-2 text-sm text-rose-700 dark:text-rose-300">
+            <Flag className="size-4 shrink-0" />
+            <span className="font-medium">{flagReason}</span>
+          </div>
+          <button
+            type="button"
+            onClick={submitUnflag}
+            disabled={busy !== null}
+            className="shrink-0 cursor-pointer rounded-full border border-border/70 bg-background/65 px-3 py-1.5 text-xs font-medium transition hover:border-primary/40 disabled:opacity-50"
+          >
+            {busy === "unflag" ? "Removing…" : "Remove flag"}
+          </button>
+        </div>
+      )}
+
+      {msg && (
+        <p
+          className={`mt-3 rounded-2xl px-3 py-2 text-sm ${
+            msg.ok
+              ? "border border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+              : "border border-destructive/30 bg-destructive/10 text-destructive"
+          }`}
+        >
+          {msg.text}
+        </p>
+      )}
+    </section>
   );
 }

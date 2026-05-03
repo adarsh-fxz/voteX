@@ -4,15 +4,15 @@ import { motion, useReducedMotion } from "framer-motion";
 
 const nodes = [
   { x: 160, y: 72, label: "Proof" },
-  { x: 74, y: 192, label: "Wallet" },
-  { x: 246, y: 192, label: "Tally" },
+  { x: 36, y: 192, label: "Wallet" },
+  { x: 284, y: 192, label: "Tally" },
   { x: 160, y: 312, label: "IPFS" },
 ] as const;
 
 const links = [
   { x1: 160, y1: 102, x2: 160, y2: 152 },
-  { x1: 101, y1: 189, x2: 132, y2: 173 },
-  { x1: 218, y1: 189, x2: 188, y2: 173 },
+  { x1: 60, y1: 192, x2: 108, y2: 192 },
+  { x1: 260, y1: 192, x2: 212, y2: 192 },
   { x1: 160, y1: 282, x2: 160, y2: 232 },
 ] as const;
 

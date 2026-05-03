@@ -66,6 +66,10 @@ export const VOTEX_PROGRAM_ID =
 
 export const APP_NAME = "VoteX";
 
+// Hard-coded moderator wallet. The connected wallet matching this pubkey can
+// flag polls (e.g. impersonating government officials, vulgarity, abuse).
+export const ADMIN_PUBKEY = "EH2PR6WDVC4U6bDAVKVS4wuSofwNi5cY9fCxU2snv5kn";
+
 // Public gateway for `ipfs://` CIDs (no secrets)
 export const IPFS_GATEWAY =
   process.env.NEXT_PUBLIC_IPFS_GATEWAY ?? "https://gateway.pinata.cloud/ipfs";
